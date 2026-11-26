@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>밤 한 번 첫 슬라이스</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+<style>
+/* VOICE: hushed, cold, a cowboy alone with his herd at night
+   IDEA: the herd seen through your own eyes; the only paper is a cattle ledger
+   PICTURE: the live 3D night fills the screen; the ledger is a worn paper page in hand
+   COLOUR and TYPE: bone white on black, one warm paper; Nanum Myeongjo, Nanum Pen Script for handwriting
+   LAYOUT: full-bleed stage, subtitles low centre, ledger bottom-left, ledger button bottom-right on phones */
+:root{color-scheme:dark;--bg:#050506;--ink:#e6e1d6;--dim:rgba(230,225,214,.62);--paper:#e4d9bf;--paperInk:#2a2118}
+:root[data-theme=light],:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font:16px/1.5 "Nanum Myeongjo",serif;-webkit-user-select:none;user-select:none}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#fps{position:fixed;top:10px;right:14px;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;pointer-events:none;text-shadow:0 1px 4px #000}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:rgba(5,5,6,.82);transition:opacity .9s;z-index:5}
+#start.gone{opacity:0;pointer-events:none}
+.card{text-align:center;padding:24px;max-width:460px}
+.card h1{margin:0 0 6px;font-size:clamp(34px,6vw,48px);line-height:1.05;font-weight:700}
+.card .sub{margin:0 0 22px;color:var(--dim);font-size:15px}
+#loadTxt{margin:0 0 22px;color:var(--dim);font-size:15px;min-height:1.5em}
+.btn{min-height:48px;padding:10px 26px;border:1px solid rgba(230,225,214,.5);border-radius:999px;background:rgba(5,5,6,.55);color:var(--ink);font:700 16px "Nanum Myeongjo",serif;cursor:pointer}
+.btn:hover{border-color:rgba(230,225,214,.85)}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.btn:disabled{opacity:.5;cursor:default}
+#hint{position:fixed;left:50%;top:18%;transform:translateX(-50%);margin:0;font-size:15px;color:var(--dim);pointer-events:none;transition:opacity 1.2s;text-align:center;white-space:nowrap;text-shadow:0 1px 6px #000;opacity:0}
+body.playing #hint{opacity:1}
+body.playing #hint.gone{opacity:0}
+#sub{position:fixed;left:50%;bottom:max(92px,14vh);transform:translateX(-50%);margin:0;font-size:clamp(18px,2.6vw,24px);color:var(--ink);opacity:0;transition:opacity .6s;pointer-events:none;text-shadow:0 2px 10px #000;white-space:nowrap}
+#sub.show{opacity:1}
+#ledger{position:fixed;left:max(16px,3vw);bottom:max(16px,3vh);width:clamp(170px,22vw,230px);transform:translateY(130%) rotate(-3deg);transition:transform .7s cubic-bezier(.2,.8,.2,1);pointer-events:none;z-index:2}
+#ledger.open{transform:translateY(0) rotate(-3deg)}
+.page{background:var(--paper);background-image:repeating-linear-gradient(180deg,transparent 0 27px,rgba(80,60,40,.18) 27px 28px),radial-gradient(120% 90% at 30% 20%,rgba(255,255,255,.25),rgba(120,90,50,.25));color:var(--paperInk);padding:14px 18px 18px;border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,.6),inset 0 0 22px rgba(90,60,30,.35)}
+.page .lh{margin:0 0 4px;font:400 26px/1.1 "Nanum Pen Script",cursive;opacity:.75}
+.page .lw{margin:0;font:400 34px/1.15 "Nanum Pen Script",cursive}
+#ledgerBtn{position:fixed;right:max(16px,3vw);bottom:max(16px,3vh);display:none;align-items:center;gap:8px;z-index:3}
+body.playing.touch #ledgerBtn{display:flex}
+#ledgerBtn svg{width:20px;height:20px;flex:none}
+#joy{position:fixed;width:112px;height:112px;margin:0;border:1.5px solid rgba(230,225,214,.45);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;opacity:0;transition:opacity .15s;z-index:2}
+#joy.show{opacity:1}
+#knob{position:absolute;left:50%;top:50%;width:46px;height:46px;border-radius:50%;background:rgba(230,225,214,.35);transform:translate(-50%,-50%)}
+#resume{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);display:none;z-index:4}
+#resume.show{display:block}
+#end{position:fixed;inset:0;display:grid;place-items:center;background:#000;opacity:0;pointer-events:none;transition:opacity 1.4s;z-index:6}
+#end.show{opacity:1;pointer-events:auto}
+#turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
+body.portrait #turn{display:block}
+@media (prefers-reduced-motion: reduce){#start,#hint,#sub,#ledger,#end{transition:none}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="fps">fps –</div>
+<p id="turn">가로로 돌리면 더 넓게 보여요</p>
+<p id="hint">장부를 펴고, 랜턴으로 비춰서 소를 세어 보세요</p>
+<p id="sub" aria-live="polite"></p>
+<div id="ledger" aria-hidden="true"><div class="page"><p class="lh">장부</p><p class="lw">소 &mdash; 10마리</p></div></div>
+<button id="ledgerBtn" class="btn" type="button" aria-pressed="false">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/><path d="M9 8h6"/></svg>
+  <span>장부 펴기</span>
+</button>
+<div id="joy"><div id="knob"></div></div>
+<button id="resume" class="btn" type="button">클릭해서 계속</button>
+<div id="start"><div class="card"><h1>밤 한 번</h1><p class="sub">첫 슬라이스</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button></div></div>
+<div id="end"><div class="card"><h1>끝</h1><p class="sub">첫 슬라이스</p><button id="again" class="btn" type="button">다시 하기</button></div></div>
+<script>if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');</script>
+<script src="slice.js"></script>
+</body>
+</html>

@@ -1,0 +1,21 @@
+{
+  "name": "night-herd",
+  "version": "0.1.0",
+  "description": "Night Herd: 서부 개척시대 1인칭 공포 게임 (웹, Three.js)",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bake:cows": "node gen-slice.mjs && mkdir -p lantern/cows && cp slice/cows/*.json lantern/cows/",
+    "bake:hand": "node gen-hand.mjs 0.0016",
+    "build:slice": "esbuild slice-src.js --bundle --minify --format=iife --target=es2020 --outfile=slice/slice.js",
+    "build:lantern": "python3 assemble-lantern.py && esbuild lantern-src.js --bundle --minify --format=iife --target=es2020 --outfile=lantern/lantern.js",
+    "build": "npm run build:slice && npm run build:lantern",
+    "serve": "python3 -m http.server 8000"
+  },
+  "dependencies": {
+    "three": "^0.187.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
+  }
+}
