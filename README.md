@@ -20,6 +20,12 @@
 - PC: WASD로 걷고 마우스로 둘러봐요. 첫 슬라이스는 E로 장부를 펴요. 랜턴 슬라이스는 F로 끄거나 다시 켜고, 스페이스나 오른쪽 클릭을 누르고 있으면 랜턴을 들어 올려요.
 - 폰: 왼쪽 가상 조이스틱으로 걷고 오른쪽을 드래그해서 둘러봐요. 나머지는 화면 버튼으로 해요.
 
+## 플레이하기
+
+온라인: https://kimarthur815-collab.github.io/night-herd/
+
+첫 화면에서 슬라이스를 골라요. 폰은 가로로 돌리면 더 넓게 보여요.
+
 ## 직접 실행하기
 
 빌드된 페이지가 저장소에 들어 있어서 바로 실행할 수 있어요. 파일을 불러와야 하니 로컬 서버로 열어야 해요.
@@ -41,7 +47,8 @@ npm run serve
 | `gen-hand.mjs` | 손을 구워서 `lantern/hand.json`에 저장해요. |
 | `slice-src.js` | 첫 슬라이스 전체 코드 (환경, 소, 쿠와하라, 소리, 이동, 세기, 엔딩) |
 | `lantern-template.js`, `assemble-lantern.py` | 랜턴 슬라이스 코드. 첫 슬라이스의 공통 부분을 끼워 넣어 `lantern-src.js`를 만들어요. |
-| `gen.mjs`, `main.js`, `herd.js`, `index.html` | 초기 룩 개발용 정지 화면 |
+| `index.html` | 첫 화면. 두 슬라이스로 가는 링크 |
+| `gen.mjs`, `main.js`, `herd.js`, `lookdev.html` | 초기 룩 개발용 정지 화면 (`npm install` 후 로컬에서만 동작) |
 | `gen-preview.mjs`, `preview-src.js` | 초기 미리보기 페이지 |
 
 ## 다시 빌드하기
