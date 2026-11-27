@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night Herd · 밤 장면</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* The night: no buttons and no numbers on screen. Only the cowboy's muttered lines, low in the middle. */
+:root{color-scheme:dark;--bg:#050506;--ink:#e6e1d6;--dim:rgba(230,225,214,.62)}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font:16px/1.5 "Nanum Myeongjo",serif;-webkit-user-select:none;user-select:none}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#fps{position:fixed;top:10px;right:14px;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;pointer-events:none;text-shadow:0 1px 4px #000;display:none}
+body.debug #fps{display:block}
+#start,#pause,#end{position:fixed;inset:0;display:grid;place-items:center}
+#start{background:rgba(5,5,6,.82);transition:opacity .9s;z-index:5}
+#start.gone{opacity:0;pointer-events:none}
+#pause{background:rgba(5,5,6,.7);z-index:6;opacity:0;pointer-events:none}
+#pause.show{opacity:1;pointer-events:auto}
+#end{background:#000;opacity:0;pointer-events:none;transition:opacity 1.4s;z-index:7}
+#end.show{opacity:1;pointer-events:auto}
+.card{text-align:center;padding:24px;max-width:520px}
+.card h1{margin:0 0 6px;font-size:clamp(34px,6vw,48px);line-height:1.05;font-weight:700}
+.card .sub{margin:0 0 22px;color:var(--dim);font-size:15px}
+#loadTxt{margin:0 0 22px;color:var(--dim);font-size:15px;min-height:1.5em}
+.btn{min-height:48px;padding:10px 22px;border:1px solid rgba(230,225,214,.5);border-radius:999px;background:rgba(5,5,6,.55);color:var(--ink);font:700 16px "Nanum Myeongjo",serif;cursor:pointer;touch-action:none}
+.btn:hover{border-color:rgba(230,225,214,.85)}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.btn:disabled{opacity:.5;cursor:default}
+#sub{position:fixed;left:50%;bottom:max(92px,14vh);transform:translateX(-50%);margin:0;font-size:clamp(17px,2.4vw,22px);color:var(--ink);opacity:0;transition:opacity .5s;pointer-events:none;text-shadow:0 2px 10px #000;white-space:nowrap}
+#sub.show{opacity:1}
+#turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
+body.portrait #turn{display:block}
+@media (prefers-reduced-motion: reduce){#start,#sub,#end{transition:none}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="fps">fps –</div>
+<p id="turn">가로로 돌리면 더 넓게 보여요</p>
+<p id="sub" aria-live="polite"></p>
+<div id="pause"><div class="card"><h1>멈춤</h1><p class="sub">밤 장면 · 1단계</p><button id="resume" class="btn" type="button">계속</button></div></div>
+<div id="end"><div class="card"><h1>여기까지</h1><p class="sub">밤 장면 1단계는 여기서 끝나요</p><button id="again" class="btn" type="button">다시 하기</button></div></div>
+<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">밤 장면 · 1단계</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button></div></div>
+<script>if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'); if (location.hash === '#debug') document.body.classList.add('debug');</script>
+<script src="night.js"></script>
+</body>
+</html>

@@ -2,6 +2,8 @@
 //   WITH_COUNTING=true  → first slice "밤 한 번": count the herd by looking at each cow in the light of the lantern you hold
 //   WITH_COUNTING=false → lantern slice: the held lantern on its own
 //   WALK=true           → walk slice: a sunny desert day, the herd walks away from you when you come close
+//   NIGHT_SCENE=true    → the night (밤 장면, stage 1): the herd stands in front of you; tap each cow to count it, then swipe on
+//                         to the next place. Places, sizes and temporary values are in night-layout.js
 // The lantern: walk, raise it, let it go out (by hand, wind or empty oil), relight it only at the campfire.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -13,9 +15,12 @@ import { fbm } from './cow.js';
 import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, updateRevolver, reloadRevolver } from './revolver-model.js';
 import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
+import { NL, hillH } from './night-layout.js';
 
 const DEBUG = location.hash === '#debug';
-const GUN = !WALK && !WITH_COUNTING; // the lantern slice: lantern in the left hand, revolver in the right, standing by the fire
+const GUN = !WALK && !WITH_COUNTING; // the lantern slice and the night: lantern in the left hand, revolver in the right
+const ASSET = NIGHT_SCENE ? '../lantern/' : ''; // the night page uses the lantern slice's baked cows, hands, plants and revolver
+const groundH = (x, z) => (NIGHT_SCENE ? Math.max(0, hillH(x, z)) : 0);
 THREE.ShaderChunk.lights_pars_begin = THREE.ShaderChunk.lights_pars_begin.replace(
   'float distanceFalloff = 1.0 / max( pow( lightDistance, decayExponent ), 0.01 );',
   'float distanceFalloff = 1.0 / pow( sqrt( lightDistance * lightDistance + 0.81 ), decayExponent );');
@@ -53,7 +58,7 @@ const NUM = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여�
 const ui = {
   start: $('start'), startBtn: $('startBtn'), loadTxt: $('loadTxt'), sub: $('sub'), joy: $('joy'), knob: $('knob'),
   fps: $('fps'), hint: $('hint'), resume: $('resume'), prompt: $('prompt'), lampBtn: $('lampBtn'), raiseBtn: $('raiseBtn'),
-  end: $('end'), again: $('again'), fsBtn: $('fsBtn'), cockBtn: $('cockBtn'), fireBtn: $('fireBtn'), reloadBtn: $('reloadBtn'),
+  end: $('end'), again: $('again'), fsBtn: $('fsBtn'), pause: $('pause'), cockBtn: $('cockBtn'), fireBtn: $('fireBtn'), reloadBtn: $('reloadBtn'),
 };
 let renderer;
 try {
@@ -72,7 +77,7 @@ scene.fog = new THREE.FogExp2(new THREE.Color(0.0035, 0.004, 0.0055), 0.009);
 const camera = new THREE.PerspectiveCamera(60, 16 / 9, 0.05, 1200);
 camera.rotation.order = 'YXZ';
 
-const U = { uLanternPos: { value: new THREE.Vector3() }, uEyeGain: { value: 200 }, uEyeSelf: { value: 0 }, uTime: { value: 0 } };
+const U = { uLanternPos: { value: new THREE.Vector3() }, uEyeGain: { value: 200 }, uEyeSelf: { value: 0 }, uTime: { value: 0 }, uEyeFall: { value: NIGHT_SCENE ? 1.0 : 1.5 } }; // 임시 (night): eyeshine fades more slowly with distance, so the back rows' eyes show
 const NOISE_GLSL = /* glsl */ `
 float hash13(vec3 p){ p = fract(p*0.1031); p += dot(p, p.zyx + 31.32); return fract((p.x + p.y) * p.z); }
 float vnoise3(vec3 x){ vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f);
@@ -154,7 +159,7 @@ function cowMaterial(coat, face, phase) {
         ${COW_RIG_POS}`)
       .replace('#include <fog_vertex>', '#include <fog_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
+      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform float uEyeFall; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         { float pn = vnoise3(vObj*2.7)*0.5+0.5; float pn2 = vnoise3(vObj*9.0);
           float fm = smoothstep(0.2, 0.8, vExt.z + 0.25*vnoise3(vObj*14.0));
@@ -185,17 +190,17 @@ function cowMaterial(coat, face, phase) {
         #endif`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         { float dl = length(vWP - uLanternPos); float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-          totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), 1.5) + uEyeSelf * pow(fc, 4.0)); }`);
+          totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), uEyeFall) + uEyeSelf * pow(fc, 4.0)); }`);
   };
   m.customProgramCacheKey = () => 'cow-rig-v3';
   return m;
 }
 
 async function loadVariants(onProgress) {
-  const meta = await (await fetch('cows/cows.json')).json();
+  const meta = await (await fetch(ASSET + 'cows/cows.json')).json();
   let done = 0;
   return Promise.all(meta.map(async (m) => {
-    const j = await (await fetch(m.file)).json();
+    const j = await (await fetch(ASSET + m.file)).json();
     const raw = atob(j.data);
     const u8 = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
@@ -221,6 +226,11 @@ async function loadVariants(onProgress) {
     g.setAttribute('aHead', new THREE.BufferAttribute(head, 3));
     g.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.8, 0), 2.2); // heads move: keep a generous bound
+    // where the eyes and the nose are (rest pose), and how much they follow the neck and head: for tapping a head exactly
+    const pick = (test) => { const c = new THREE.Vector3(); let n = 0, wn = 0, wh = 0;
+      for (let i = 0; i < vc; i++) if (test(i)) { c.x += pos[3 * i]; c.y += pos[3 * i + 1]; c.z += pos[3 * i + 2]; wn += rig[4 * i] / 255; wh += rig[4 * i + 1] / 255; n++; }
+      return n ? { p: c.divideScalar(n), wn: wn / n, wh: wh / n } : null; };
+    g.userData.eye = pick((i) => ext[4 * i] > 128); g.userData.nose = pick((i) => mat[4 * i] > 128);
     onProgress(++done / meta.length);
     return g;
   }));
@@ -237,6 +247,22 @@ function followWorld(x, z) {
 function makeGround() {
   const g = new THREE.PlaneGeometry(400, 400, 8, 8); // flat; shading is anchored to the world, not the mesh
   g.rotateX(-Math.PI / 2);
+  const mesh = new THREE.Mesh(g, groundMaterial());
+  WORLD_FOLLOW.push(mesh);
+  groundMesh = mesh;
+  return mesh;
+}
+// the night: the rise the herd stands on, the same ground as the desert floor
+function makeHill() {
+  const H = NL.hill, mid = (NL.stations[0].x + NL.stations[NL.stations.length - 1].x) / 2;
+  const g = new THREE.PlaneGeometry(H.width, H.depth, 140, 60); g.rotateX(-Math.PI / 2);
+  g.translate(mid, 0, NL.front.z - H.start + 0.2 - H.depth / 2);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setY(i, hillH(p.getX(i), p.getZ(i)));
+  g.computeVertexNormals();
+  return new THREE.Mesh(g, groundMaterial());
+}
+function groundMaterial() {
   const m = new THREE.MeshStandardMaterial({ color: 0x332a1f, roughness: 1.0 });
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP2;').replace('#include <fog_vertex>', '#include <fog_vertex>\nvWP2 = (modelMatrix*vec4(transformed,1.0)).xyz;');
@@ -255,10 +281,7 @@ function makeGround() {
           col *= (0.7 + 0.45*c2) * (0.85 + 0.3*c3);
           diffuseColor.rgb = col; }`);
   };
-  const mesh = new THREE.Mesh(g, m);
-  WORLD_FOLLOW.push(mesh);
-  groundMesh = mesh;
-  return mesh;
+  return m;
 }
 let groundMesh = null;
 
@@ -291,7 +314,8 @@ function makeRidges() {
   return grp;
 }
 
-const plantClear = (x, z) => x > -8 && x < 9 && z > -17 && z < 6; // the camp and the herd stay open
+const plantClear = NIGHT_SCENE ? (x, z) => x > NL.clear.x0 && x < NL.clear.x1 && z > NL.clear.z0 && z < 6 // the camp, the herd and the rise stay open
+  : (x, z) => x > -8 && x < 9 && z > -17 && z < 6; // the camp and the herd stay open
 let saguaroField = null, brushFields = [], gustAmt = 0;
 function updatePlants(dt, gusting) {
   gustAmt = damp(gustAmt, gusting ? 1 : 0, gusting ? 1.8 : 0.7, dt);
@@ -329,7 +353,7 @@ function tumbleStep(dt, gust) {
     for (const c of cows) for (const b of c.blockers) bump(b.x, b.z, b.r);
     bump(FIRE_POS.x, FIRE_POS.z, 0.7);
     t.phase += dt * t.speed * 2.4;
-    t.mesh.position.set(t.pos.x, t.r + Math.abs(Math.sin(t.phase)) * 0.22 * Math.min(1, t.speed / 2.5), t.pos.z);
+    t.mesh.position.set(t.pos.x, groundH(t.pos.x, t.pos.z) + t.r + Math.abs(Math.sin(t.phase)) * 0.22 * Math.min(1, t.speed / 2.5), t.pos.z);
     t.mesh.quaternion.premultiply(_tq.setFromAxisAngle(_tAxis, (t.speed * dt) / t.r));
   }
 }
@@ -934,7 +958,7 @@ function parseHand(j, mirror) {
   return g;
 }
 async function loadHand() {
-  const j = await (await fetch('hand.json')).json();
+  const j = await (await fetch(ASSET + 'hand.json')).json();
   handPivot.add(new THREE.Mesh(parseHand(j, MX < 0), handMaterial()));
 }
 // ---------------- the revolver in the right hand ----------------
@@ -953,7 +977,7 @@ const RELOAD_HOLD = new THREE.Vector3(0.02, -0.12, -0.28), RELOAD_Q = new THREE.
   z.addScaledVector(x, -z.dot(x)).normalize();
   return new THREE.Matrix4().makeBasis(x, new THREE.Vector3().crossVectors(z, x), z);
 })());
-const GUN_TURN = { yaw: 0.5, roll: 0.18, aimD: 5 };
+const GUN_TURN = { yaw: 0, roll: 0.18, aimD: 5 }; // yaw 0: the muzzle points where you look (it was turned 0.5 rad ≈ 28° inward)
 const GUN_HOLD = new THREE.Vector3(0.14, -0.11, -0.29), _gm = new THREE.Matrix4(), _ga = new THREE.Vector3(), _gq = new THREE.Quaternion(), _gup = new THREE.Vector3(0, 1, 0);
 function glowTexture(spikes) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
@@ -973,7 +997,7 @@ function makeGun() {
   armR = makeArmRig(GARM, gunPivot);
 }
 async function loadGunHand() {
-  const [h, t, r] = await Promise.all([...['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(f)).json()), loadRevolver('revolver/colt75.json')]);
+  const [h, t, r] = await Promise.all([...['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(ASSET + f)).json()), loadRevolver(ASSET + 'revolver/colt75.json')]);
   rev = r; gunPivot.add(rev.group); MUZZLE_Z = rev.muzzle.z; flashV.position.z = MUZZLE_Z - 0.035;
   // polished steel shows what it reflects: the night, and the lantern held off to the left
   const env = makeRevolverEnvironments(renderer, ['night']).night, mats = new Set();
@@ -1009,7 +1033,7 @@ function gunStep(dt, time) {
   p.y += Math.sin(time * 0.27 + 2.0) * 0.0012 + Math.sin(time * 1.3) * 0.0008; // breathing
   _ga.set(0, -0.7 * (1 - gun.aim), -GUN_TURN.aimD);
   _gm.lookAt(p, _ga, _gup); gunPivot.quaternion.setFromRotationMatrix(_gm);
-  // turned in a little and canted, so you see the side of it: the cylinder and the hammer
+  // canted a little, so you see some of its side: the cylinder and the hammer
   gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(0.42 * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
   gunPivot.position.copy(p);
   if (gun.reload > 0.001) { const rb = gun.reload * gun.reload * (3 - 2 * gun.reload); gunPivot.position.lerp(RELOAD_HOLD, rb); gunPivot.quaternion.slerp(RELOAD_Q, rb); }
@@ -1108,6 +1132,7 @@ vmScene.add(vmFlame, vmFire, vmHemi);
 const sky = makeSky();
 const ridges = makeRidges();
 scene.add(sky, makeGround(), ridges);
+if (NIGHT_SCENE) scene.add(makeHill());
 if (!WALK) scene.add(makeCampfire());
 const LANTERN_I = 9.5;
 const lanternLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), LANTERN_I, 40, 1.4);
@@ -1151,7 +1176,7 @@ addEventListener('resize', resize);
 resize();
 
 // ---------------- player ----------------
-const player = { pos: GUN ? new THREE.Vector3(-0.35, 0, 0.75) : new THREE.Vector3(0.2, 0, 0.9), vel: new THREE.Vector3(), yaw: 0, pitch: -0.05, bob: 0, stepPhase: 0 };
+const player = { pos: NIGHT_SCENE ? new THREE.Vector3(NL.stations[0].x, 0, NL.standZ) : GUN ? new THREE.Vector3(-0.35, 0, 0.75) : new THREE.Vector3(0.2, 0, 0.9), vel: new THREE.Vector3(), yaw: 0, pitch: NIGHT_SCENE ? NL.look.pitch : -0.05, bob: 0, stepPhase: 0 };
 const keys = new Set();
 let started = false, locked = false, dragLook = TOUCH;
 const joy = { id: null, cx: 0, cy: 0, x: 0, y: 0 };
@@ -1167,6 +1192,7 @@ function tryLock() {
 document.addEventListener('pointerlockchange', () => {
   locked = document.pointerLockElement === canvas;
   if (locked) dragLook = false;
+  if (NIGHT_SCENE) { if (!locked && started && !TOUCH && !dragLook) pauseNight(); return; }
   ui.resume.classList.toggle('show', started && !TOUCH && !locked && !dragLook && !ended);
 });
 document.addEventListener('pointerlockerror', () => { dragLook = true; });
@@ -1177,6 +1203,7 @@ document.addEventListener('mousemove', (e) => {
 });
 canvas.addEventListener('pointerdown', (e) => {
   if (!started) return;
+  if (NIGHT_SCENE && TOUCH) { gestureDown(e); return; }
   if (!TOUCH && !locked && !dragLook) { tryLock(); return; }
   if (TOUCH && !GUN && e.clientX < innerWidth * 0.45 && joy.id === null) {
     joy.id = e.pointerId; joy.cx = e.clientX; joy.cy = e.clientY; joy.x = joy.y = 0;
@@ -1185,6 +1212,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch {}
 });
 canvas.addEventListener('pointermove', (e) => {
+  if (NIGHT_SCENE && TOUCH) return;
   if (e.pointerId === joy.id) {
     let dx = e.clientX - joy.cx, dy = e.clientY - joy.cy; const r = Math.hypot(dx, dy), R = 56;
     if (r > R) { dx *= R / r; dy *= R / r; }
@@ -1198,12 +1226,18 @@ canvas.addEventListener('pointermove', (e) => {
   }
 });
 const endPointer = (e) => {
+  if (NIGHT_SCENE && TOUCH) { gestureUp(e); return; }
   if (e.pointerId === joy.id) { joy.id = null; joy.x = joy.y = 0; ui.joy.classList.remove('show'); }
   if (e.pointerId === look.id) look.id = null;
 };
 canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
 addEventListener('keydown', (e) => {
   if (!started) return;
+  if (NIGHT_SCENE) {
+    if (e.code === 'Escape') { pauseNight(); return; }
+    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && !e.repeat) { nextStation(); e.preventDefault(); return; }
+    if (['KeyE', 'KeyR', 'KeyW', 'KeyA', 'KeyS', 'ArrowUp', 'ArrowDown', 'ArrowLeft'].includes(e.code)) return; // stage 1: no shooting, no walking about
+  }
   if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
   if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
   if (GUN && e.code === 'KeyE' && !e.repeat) { cockGun(); return; }
@@ -1235,6 +1269,14 @@ function resolveCollisions(p) {
 }
 
 
+// where a rest-pose point of the head ends up after the neck and head turn (the same rig as COW_RIG_MATS), in the world
+const RIG_N0 = new THREE.Vector3(0, 1.08, 0.58), RIG_H0 = new THREE.Vector3(0, 1.22, 1.03), _rq = new THREE.Quaternion(), _re = new THREE.Euler();
+function posedHead(c, pt, out) {
+  const u = c.mesh.material.userData.own.uPose.value;
+  out.copy(pt.p).sub(RIG_H0).applyQuaternion(_rq.setFromEuler(_re.set(-u.w * pt.wh, u.z * pt.wh, 0, 'YXZ'))).add(RIG_H0);
+  out.sub(RIG_N0).applyQuaternion(_rq.setFromEuler(_re.set(-u.y * pt.wn, u.x * pt.wn, 0, 'YXZ'))).add(RIG_N0);
+  return out.applyMatrix4(c.mesh.matrixWorld);
+}
 // ---------------- cows: idle life + stare ----------------
 const camLocal = new THREE.Vector3();
 function lookAngles(c, worldTarget) {
@@ -1256,6 +1298,14 @@ function cowStep(c, dt, time) {
   } else if ((c.stir || 0) > 0.15 || (c.speed || 0) > 0.25) { // going along with the herd: head up, looking where it walks
     ai.yaw = damp(ai.yaw, c.turnLead || 0, 3, dt); ai.pitch = damp(ai.pitch, (c.speed || 0) > 0.25 ? -0.2 : -0.06, 2.5, dt);
     ai.t = Math.min(ai.t, 1.5);
+  } else if (NIGHT_SCENE) { // 임시: the night: they stand and mostly watch you; now and then one puts its head down
+    const [y, p] = lookAngles(c, camera.position);
+    ai.t -= dt;
+    if (ai.t <= 0) {
+      if (Math.random() < 0.15) { ai.graze = true; ai.tYaw = rand(-0.35, 0.35); ai.t = rand(3, 6); }
+      else { ai.graze = false; ai.tYaw = rand(-0.25, 0.25); ai.tPitch = rand(-0.15, 0.08); ai.t = rand(2.5, 6); }
+    }
+    ai.yaw = damp(ai.yaw, ai.graze ? ai.tYaw : y + ai.tYaw, 1.4, dt); ai.pitch = damp(ai.pitch, ai.graze ? -1.05 : p + ai.tPitch, 1.1, dt);
   } else {
     ai.t -= dt;
     if (ai.t <= 0) {
@@ -1272,6 +1322,7 @@ function cowStep(c, dt, time) {
   own.uTail.value = 0.1 * Math.sin(time * 1.1 + c.phase) + 0.5 * ai.flick * Math.sin(time * 9 + c.phase);
   // head position for breath sound
   c.headWorld.set(Math.sin(ai.yaw) * 0.75, 1.0, 0.58 + Math.cos(ai.yaw) * 0.75).applyMatrix4(c.mesh.matrixWorld);
+  if (NIGHT_SCENE) { const ud = c.mesh.geometry.userData; posedHead(c, ud.eye, c.eyeWorld); posedHead(c, ud.nose, c.noseWorld); }
 }
 
 
@@ -1283,7 +1334,7 @@ function updateAdapt(dt) {
   if (fwd.y < -0.05) dNear = camera.position.y / -fwd.y;
   for (const c of cows) {
     for (const b of c.blockers) {
-      adaptV.set(b.x, 1.0 * c.s, b.z).sub(camera.position);
+      adaptV.set(b.x, 1.0 * c.s + (c.y0 || 0), b.z).sub(camera.position);
       const d = adaptV.length();
       if (Math.acos(clamp(adaptV.dot(fwd) / d, -1, 1)) < 0.7) dNear = Math.min(dNear, Math.max(0.3, d - b.r));
     }
@@ -1309,6 +1360,7 @@ function lampAction() {
   if (!started) return;
   if (lamp.mode === 'on') { lamp.mode = 'turning'; lamp.t = 0; sound.click(); return; }
   if (lamp.mode === 'off') {
+    if (NIGHT_SCENE) { lamp.mode = 'up'; lamp.t = 0; sound.click(); return; } // 임시: in the night the wick is turned back up where you stand
     if (nearFire()) { lamp.mode = 'relight'; lamp.t = 0; }
     else say('모닥불에서만 다시 켤 수 있어요');
   }
@@ -1316,7 +1368,7 @@ function lampAction() {
 function lampStep(dt) {
   lamp.t += dt;
   if (lamp.mode === 'on') {
-    lamp.oil = Math.max(0, lamp.oil - dt / OIL_TIME);
+    if (!NIGHT_SCENE) lamp.oil = Math.max(0, lamp.oil - dt / OIL_TIME); // 임시: no oil running out in the night yet
     const oilF = lamp.oil > 0.2 ? 1 : 0.35 + 0.65 * (lamp.oil / 0.2);
     let lv = oilF;
     if (lamp.oil < 0.12 && Math.random() < dt * 3) { lamp.sputter = 1; sound.sputter(); }
@@ -1328,6 +1380,9 @@ function lampStep(dt) {
   } else if (lamp.mode === 'turning') { // wick turned down by hand
     lamp.level = Math.max(0, 1 - lamp.t / 0.6);
     if (lamp.t >= 0.6) { lamp.mode = 'off'; lamp.level = 0; sound.puff(); }
+  } else if (lamp.mode === 'up') { // the night: the wick turned back up
+    lamp.level = Math.min(1, lamp.t / 0.6);
+    if (lamp.t >= 0.6) { lamp.mode = 'on'; lamp.level = 1; }
   } else if (lamp.mode === 'dying') { // wind or empty fount: a few last flickers
     const d = lamp.cause === 'oil' ? 1.6 : 0.5;
     lamp.level = Math.max(0, (1 - lamp.t / d) * (Math.random() < 0.5 ? 1 : 0.3));
@@ -1339,7 +1394,7 @@ function lampStep(dt) {
   }
   // wind gusts
   lamp.gustTimer -= dt;
-  if (lamp.gustTimer <= 0 && lamp.gustT < 0) { lamp.gustT = 0; lamp.gustTimer = rand(45, 110); sound.gust(); }
+  if (lamp.gustTimer <= 0 && lamp.gustT < 0 && !NIGHT_SCENE) { lamp.gustT = 0; lamp.gustTimer = rand(45, 110); sound.gust(); } // 임시: no gusts in the night yet
   if (lamp.gustT >= 0) {
     lamp.gustT += dt;
     if (lamp.gustT > 2.3) { lamp.gustT = -1; if (lamp.mode === 'on' && Math.random() < 0.5) goOut('wind'); }
@@ -1367,6 +1422,7 @@ if (ui.raiseBtn) {
 }
 document.addEventListener('mousedown', (e) => {
   if (!started) return;
+  if (NIGHT_SCENE) { if (e.button === 0 && (locked || dragLook) && !TOUCH) nightTap(0, 0); return; }
   if (GUN) { if (e.button === 2) cockGun(); else if (e.button === 0 && locked) fireGun(); return; }
   if (e.button === 2) raiseMouse = true;
 });
@@ -1437,6 +1493,162 @@ function revealStep() {
   }
 }
 
+// ---------------- the night (밤 장면, stage 1): count the herd one by one, then on to the next place ----------------
+// Phone: tap a cow to count it, swipe the screen to the left (like turning a page) to walk to the next place, swipe up or
+// down on the left for the lantern. PC: look with the mouse, click to count the cow in the middle of the view, D or → for
+// the next place, F and Space for the lantern. Back (phone) or Esc (PC) pauses. Values marked 임시 are in night-layout.js.
+const night = { i: 0, walking: false, t: 0, dur: 1, x0: 0, x1: 0, readyAt: Infinity, lastAct: 0, misses: 0, toldNext: false, nextHintAt: -1, finishAt: -1, endT: -1 };
+let paused = false;
+const tapO = new THREE.Vector3(), tapD = new THREE.Vector3(), tapC = new THREE.Vector3();
+const lastStation = () => NL.stations.length - 1;
+const stationDone = (i) => cows.every((c) => c.station !== i || c.counted);
+const hintCount = () => say(TOUCH ? NL.lines.count : NL.lines.countPC, 3.2);
+const hintNext = () => say(TOUCH ? NL.lines.next : NL.lines.nextPC, 3.2);
+// the herd in front of each place: a ragged front row, then thinning rows up the rise, all (mostly) facing you
+function makeNightHerd(geos) {
+  let seed = NL.seed; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const placed = [];
+  const circles = (x, z, yaw, s) => [0.55, 0.0, -0.6].map((lz) => ({ x: x + Math.sin(yaw) * lz * 0.92, z: z + Math.cos(yaw) * lz * 0.92, r: 0.37 * s }));
+  const clash = (bs) => placed.some((q) => q.some((a) => bs.some((b) => Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r + 0.04)));
+  const add = (si, x, z, back) => {
+    const s = lerp(NL.scale[0], NL.scale[1], r()), face = Math.atan2(NL.stations[si].x - x, NL.standZ - z);
+    let yaw = face;
+    for (let k = 0; k < 10; k++) { yaw = face + (k < 9 ? (r() - 0.5) * 2 * NL.front.turn : 0); if (!clash(circles(x, z, yaw, s))) break; } // turned too far into a neighbour: try again, at last face straight
+    placed.push(circles(x, z, yaw, s));
+    const coat = lerp(NL.coat[0], NL.coat[1], r()) * (back ? NL.backDark : 1), face2 = Math.min(1, coat + 0.06 + r() * 0.1);
+    const i = cows.length, mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], cowMaterial(coat, face2, i * 1.7));
+    // on the rise a cow leans with the ground: front and back hooves on it
+    // (only part of the slope: the legs take the rest, so the head stays up; the front hooves stay on the ground)
+    const fx = Math.sin(yaw) * 0.9, fz = Math.cos(yaw) * 0.9, hf = groundH(x + fx, z + fz);
+    const lean = NL.lean * Math.atan2(groundH(x - fx, z - fz) - hf, 1.8), y = hf + 0.9 * Math.sin(lean);
+    mesh.position.set(x, y, z); mesh.rotation.order = 'YXZ'; mesh.rotation.y = yaw; mesh.rotation.x = lean;
+    mesh.scale.setScalar(s); scene.add(mesh); mesh.updateMatrixWorld(true);
+    const blockers = [0.55, 0.0, -0.6].map((lz) => { const p = new THREE.Vector3(0, 0, lz * 0.92).applyMatrix4(mesh.matrixWorld); return { x: p.x, z: p.z, r: 0.37 * s }; });
+    cows.push({
+      mesh, s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(), station: si, y0: y, eyeWorld: new THREE.Vector3(), noseWorld: new THREE.Vector3(),
+      aimPoints: [], heading: yaw, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
+      stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null, startle: 0, dead: false,
+      ai: { t: rand(0, 3), yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, flick: 0, graze: false },
+    });
+  };
+  NL.stations.forEach((st, si) => {
+    const n0 = st.rows[0], gaps = Array.from({ length: n0 - 1 }, () => lerp(NL.front.gap[0], NL.front.gap[1], r()));
+    let x = st.x - gaps.reduce((a, b) => a + b, 0) / 2, row = [], zRow = NL.front.z;
+    for (let k = 0; k < n0; k++) { row.push(x); add(si, x, NL.front.z + (r() - 0.5) * NL.front.jitterZ, false); x += gaps[k] || 0; }
+    // each row behind stands in the gaps of the row in front of it as seen from where you stand, so its heads show between theirs
+    st.rows.slice(1).forEach((n, k) => {
+      const z0 = NL.front.z - NL.rowBack[k], far = (NL.standZ - z0) / (NL.standZ - zRow), mids = row.slice(1).map((v, j) => (v + row[j]) / 2);
+      const xs = mids.length >= n ? mids.slice(Math.floor((mids.length - n) / 2), Math.floor((mids.length - n) / 2) + n).map((v) => st.x + (v - st.x) * far)
+        : Array.from({ length: n }, (_, j) => st.x - (n * NL.rowGap) / 2 + (j + 0.5) * NL.rowGap);
+      row = xs.map((v) => v + (r() - 0.5) * 2 * NL.rowJitter[0]); zRow = z0;
+      for (const v of row) add(si, v, z0 + (r() - 0.5) * 2 * NL.rowJitter[1], true);
+    });
+  });
+}
+// a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, if the lantern's light reaches it
+function nightTap(nx, ny) {
+  if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
+  tapO.copy(camera.position);
+  tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
+  let best = Infinity, hit = null;
+  for (const c of cows) {
+    // the barrel (belly to back, about 0.6 to 1.35 m) and the head (muzzle up to the poll); close to the real outline, so a head
+    // showing over the back of a cow in front can be tapped
+    for (const b of c.blockers) { const t = raySphere(tapO, tapD, tapC.set(b.x, c.y0 + 0.95 * c.s, b.z), 0.38 * c.s); if (t < best) { best = t; hit = c; } }
+    for (const [k, rr] of [[0, 0.15], [0.5, 0.15], [1, 0.14]]) { const t = raySphere(tapO, tapD, tapC.copy(c.eyeWorld).lerp(c.noseWorld, k), rr * c.s); if (t < best) { best = t; hit = c; } } // between the eyes, mid-face, nose
+  }
+  if (!hit || best > 30) { if (++night.misses >= NL.hint.misses) { night.misses = 0; hintCount(); } return; } // tapping at nothing: say how again
+  night.misses = 0; night.lastAct = performance.now();
+  if (hit.counted) return; // 임시: one already counted is not counted again
+  tapC.copy(tapO).addScaledVector(tapD, best);
+  if (lamp.level < 0.05 || lanternLightAt(tapC) < NL.countLight) return; // too dark to tell what it is (기획서: 랜턴이 꺼진 동안 셀 수 없음)
+  hit.counted = true; count++;
+  if (count <= NL.told) say(`${NUM[count - 1]}…`, NL.saySecs); else say(`…${NUM[count - 1]}.`, 3.0);
+}
+function nextStation() {
+  if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
+  night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
+  if (night.i === lastStation()) { night.endT = 0; return; } // 임시: going on from the last place ends the night (stage 1)
+  night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
+  night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
+}
+// where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
+function nightMove(dt) {
+  let speed = 0;
+  if (night.walking) {
+    night.t += dt;
+    const k = Math.min(1, night.t / night.dur), nx = lerp(night.x0, night.x1, smooth(k));
+    speed = Math.abs(nx - player.pos.x) / Math.max(dt, 1e-3);
+    player.pos.x = nx;
+    if (k >= 1) { night.walking = false; night.i++; night.lastAct = performance.now(); }
+  }
+  if (TOUCH) {
+    const turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
+    player.yaw = damp(player.yaw, turn, 6, dt); player.pitch = damp(player.pitch, NL.look.pitch, 6, dt);
+  }
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), prevPhase = player.stepPhase;
+  player.stepPhase += dt * speed * 4.4;
+  if (Math.floor(prevPhase / Math.PI) !== Math.floor(player.stepPhase / Math.PI) && speed > 0.3) sound.step();
+  const bobA = clamp(speed / 1.5, 0, 1);
+  camera.position.set(player.pos.x + Math.cos(player.stepPhase) * 0.012 * bobA * cy, EYE_H + dbgEyeUp + Math.abs(Math.sin(player.stepPhase)) * 0.025 * bobA, player.pos.z - Math.cos(player.stepPhase) * 0.012 * bobA * sy);
+  followWorld(camera.position.x, camera.position.z);
+  camera.rotation.set(player.pitch, player.yaw, 0);
+  camera.updateMatrixWorld(true);
+  camera.getWorldDirection(fwd);
+  return speed;
+}
+let dbgEyeUp = 0; // debug only: look at the herd from higher up
+// the how-to lines (first time only, again when stuck) and the end of the night
+function nightStep(dt) {
+  const now = performance.now(), L = lastStation();
+  if (night.endT >= 0) {
+    night.endT += dt;
+    finalPass.uniforms.uFade.value = clamp(night.endT / 2.2, 0, 1);
+    if (night.endT > 2.4 && !ended) { ended = true; ui.end.classList.add('show'); if (document.pointerLockElement) document.exitPointerLock(); }
+    return;
+  }
+  if (now < night.readyAt || night.walking) return;
+  if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
+  if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
+  if (night.i === L && night.finishAt < 0 && stationDone(L)) night.finishAt = now + NL.endWait * 1000;
+  if (night.finishAt > 0 && now >= night.finishAt) { night.endT = 0; return; }
+  if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!stationDone(night.i)) hintCount(); else if (night.i < L) hintNext(); }
+}
+// pause: back on a phone, Esc on a PC (also when the pointer lock or full screen is lost)
+function pauseNight() {
+  if (!started || paused || ended) return;
+  paused = true; ui.pause.classList.add('show');
+  if (document.pointerLockElement) document.exitPointerLock();
+  if (sound.ctx) sound.ctx.suspend();
+}
+function resumeNight() {
+  if (!paused) return;
+  paused = false; ui.pause.classList.remove('show');
+  sound.resume(); last = performance.now(); nextDue = 0;
+  if (TOUCH) enterFullscreen(); else tryLock();
+}
+if (NIGHT_SCENE) {
+  addEventListener('popstate', () => { if (started && !ended) { pauseNight(); history.pushState({ nh: 1 }, ''); } });
+  const fsLost = () => { if (!(document.fullscreenElement || document.webkitFullscreenElement)) pauseNight(); };
+  document.addEventListener('fullscreenchange', fsLost); document.addEventListener('webkitfullscreenchange', fsLost);
+  ui.again.addEventListener('click', () => location.reload());
+}
+// phone gestures (debug pages take any length of touch as a tap: the test browser draws slowly): a short touch is a tap; a long sideways swipe goes on; up or down on the left is the lantern
+const gest = new Map();
+function gestureDown(e) { gest.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() }); try { canvas.setPointerCapture(e.pointerId); } catch {} }
+function gestureUp(e) {
+  const g = gest.get(e.pointerId); gest.delete(e.pointerId);
+  if (!g || e.type === 'pointercancel' || !started || paused || ended) return;
+  const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y, far = Math.min(W, H) * 0.12;
+  if (Math.hypot(dx, dy) < 14 && (DEBUG || performance.now() - g.t < 600)) { nightTap((e.clientX / W) * 2 - 1, 1 - (e.clientY / H) * 2); return; }
+  if (Math.abs(dx) > far && Math.abs(dx) > 1.4 * Math.abs(dy)) { if (dx < 0) nextStation(); return; }
+  if (Math.abs(dy) > far && Math.abs(dy) > 1.4 * Math.abs(dx) && g.x < W * 0.45) {
+    night.lastAct = performance.now();
+    if (dy < 0) { if (lamp.mode === 'off') lampAction(); else if (lamp.mode === 'on') raiseTouch = true; } // up: light it, or hold it up
+    else if (raiseTouch) raiseTouch = false; else if (lamp.mode === 'on') lampAction(); // down: lower it, or put it out
+  }
+}
+
 // ---------------- holding it: pose, sway, lag, tremor, pendulum ----------------
 const REST = { p: new THREE.Vector3(0.2 * MX, -0.07, -0.37), r: new THREE.Euler(0.1, 0.55 * MX, 0.0) };
 const RAISED = { p: new THREE.Vector3(0.19 * MX, 0.08, -0.43), r: new THREE.Euler(0.25, 0.4 * MX, 0.0) };
@@ -1484,7 +1696,7 @@ function holdStep(dt, time, speed, bobA) {
     p.lerp(LEAN.p, k); rx = lerp(rx, LEAN.r.x, k); ry = lerp(ry, LEAN.r.y, k); rz = lerp(rz, LEAN.r.z, k);
   }
   // turning the wick knob down
-  if (lamp.mode === 'turning') rz += Math.sin(Math.min(1, lamp.t / 0.6) * Math.PI) * 0.12 * MX;
+  if (lamp.mode === 'turning' || lamp.mode === 'up') rz += Math.sin(Math.min(1, lamp.t / 0.6) * Math.PI) * 0.12 * MX;
   // the hand lags a little behind where you look
   const yawVel = (player.yaw - prevYaw) / Math.max(dt, 1e-3), pitchVel = (player.pitch - prevPitch) / Math.max(dt, 1e-3);
   prevYaw = player.yaw; prevPitch = player.pitch;
@@ -1577,6 +1789,7 @@ const NIGHT = { fogC: new THREE.Color(0.062, 0.064, 0.073), fogD: 0.05, zen: new
 const DAY = { fogC: new THREE.Color(0.0035, 0.004, 0.0055), fogD: 0.009, hor: new THREE.Color(0.028, 0.03, 0.038), zen: new THREE.Color(0.002, 0.0022, 0.003) };
 function frame(now) {
   if (!document.hidden) requestAnimationFrame(frame);
+  if (NIGHT_SCENE && paused) { last = now; return; }
   if (now < nextDue - 1) return;
   nextDue = Math.max(nextDue + FRAME_MS, now + FRAME_MS * 0.6);
   const dt = Math.min(0.1, (now - last) / 1000); last = now;
@@ -1585,7 +1798,7 @@ function frame(now) {
   U.uTime.value = time; FIRE_U.uTime.value = time; LU.uTime.value = time;
 
   // walking
-  const speed = movePlayer(dt);
+  const speed = NIGHT_SCENE ? nightMove(dt) : movePlayer(dt);
   updatePlants(dt, lamp.gustT >= 0);
   const bobA = clamp(speed / 1.5, 0, 1);
 
@@ -1629,9 +1842,9 @@ function frame(now) {
   finalPass.uniforms.uDesat.value = n * 0.75 * smooth(clamp((nightExp - 0.42) / 0.48, 0, 1));
   scene.fog.color.copy(DAY.fogC).lerp(NIGHT.fogC, n);
   // the counting look grows as you count
-  if (WITH_COUNTING) {
+  if (WITH_COUNTING || NIGHT_SCENE) {
     // the further you count, the more the world drains to grey and low resolution
-    countT = damp(countT, revealT >= 0 ? 1 : 0.9 * Math.min(1, count / EXPECTED_COUNT), 1.2, dt);
+    countT = damp(countT, revealT >= 0 ? 1 : 0.9 * Math.min(1, count / (NIGHT_SCENE ? NL.told : EXPECTED_COUNT)), 1.2, dt);
     finalPass.uniforms.uCount.value = countT; kuwaPass.uniforms.uCount.value = countT;
     mist.strength = 0.025 + 0.02 * countT;
   }
@@ -1640,15 +1853,16 @@ function frame(now) {
   sky.material.uniforms.uZen.value.copy(DAY.zen).lerp(NIGHT.zen, n);
   RIDGE_U.uHaze.value.copy(scene.fog.color);
   moon.intensity = lerp(0.05, 0.24, n); hemi.intensity = lerp(0.05, 0.07, n);
-  U.uEyeGain.value = 120 * lamp.level;
+  U.uEyeGain.value = (NIGHT_SCENE ? 60 : 120) * lamp.level; // the night: as bright as before at the front row (about 4 m)
   U.uEyeSelf.value = 5.0 * Math.min(1, n * 2.2);
   finalPass.uniforms.uSeed.value = (now * 0.061) % 997;
 
-  if (GUN) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
+  if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
+  if (NIGHT_SCENE) nightStep(dt);
   sound.update(camera.position, fwd, cows, time);
-  updateLampUI();
+  if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
 
   composer.render(dt);
@@ -1662,7 +1876,7 @@ function frame(now) {
     fpsAcc = 0; fpsN = 0;
   }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { last = performance.now(); nextDue = 0; requestAnimationFrame(WALK ? frameWalk : frame); sound.resume(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { last = performance.now(); nextDue = 0; requestAnimationFrame(WALK ? frameWalk : frame); if (!paused) sound.resume(); } });
 
 // ---------------- the walk slice: a sunny day, and a herd that moves away when you come close ----------------
 // temporary values to confirm: late-morning sun, flight zone 5 m, walking up to 1.3 m/s, gusts every 18-40 s
@@ -1929,8 +2143,8 @@ function frameWalk(now) {
     const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1 + (GUN ? 1 : 0);
     const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
     const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
-      Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
-      Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
+      Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`${ASSET}plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
+      Promise.all(BONE_PIECES.map((k) => loadSculpt(`${ASSET}plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
       GUN ? loadGunHand().then(bump) : Promise.resolve()]);
     saguaroField = new SaguaroField(sculpts, plantClear);
     scene.add(saguaroField.group);
@@ -1940,7 +2154,8 @@ function frameWalk(now) {
     for (const f of brushFields) scene.add(f.group);
     saguaroField.setPixel(camera, finalPass.uniforms.uRes.value.y);
     saguaroField.update(player.pos.x, player.pos.z, camera);
-    HERD.forEach((h, i) => {
+    if (NIGHT_SCENE) makeNightHerd(geos);
+    else HERD.forEach((h, i) => {
       const toCamp = Math.atan2(0 - h.x, 0.5 - h.z);
       const mesh = new THREE.Mesh(geos[h.v], cowMaterial(h.coat, h.face ?? h.coat, i * 1.7));
       mesh.position.set(h.x, 0, h.z);
@@ -1966,7 +2181,7 @@ function frameWalk(now) {
     for (const t of tumbles) spawnTumble(t, true);
     renderer.compile(scene, camera);
     if (!WALK) renderer.compile(vmScene, vmCamera);
-    ui.loadTxt.textContent = GUN ? (TOUCH ? '화면을 끌어 둘러봐요. 오른쪽 버튼으로 공이치기를 젖히고 쏴요' : '마우스 둘러보기 · 오른쪽 클릭(E) 공이치기 · 왼쪽 클릭 쏘기 · 스페이스 랜턴 들기 · F 끄기와 불 붙이기')
+    ui.loadTxt.textContent = NIGHT_SCENE ? '' : GUN ? (TOUCH ? '화면을 끌어 둘러봐요. 오른쪽 버튼으로 공이치기를 젖히고 쏴요' : '마우스 둘러보기 · 오른쪽 클릭(E) 공이치기 · 왼쪽 클릭 쏘기 · 스페이스 랜턴 들기 · F 끄기와 불 붙이기')
       : TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
       : WALK ? 'WASD 걷기 · 마우스 둘러보기'
       : WITH_COUNTING ? 'WASD 걷기 · 마우스 둘러보기 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
@@ -2012,10 +2227,16 @@ ui.startBtn.addEventListener('click', () => {
   try { sound.init(); } catch (e) { console.warn('sound', e); }
   if (WALK && sound.ctx) { sound.silenceCrickets(); try { sound.fireP.disconnect(); } catch {} } // daytime: no crickets, no campfire
   tryLock();
-  setTimeout(() => ui.hint.classList.add('gone'), 9000);
+  if (ui.hint) setTimeout(() => ui.hint.classList.add('gone'), 9000);
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
+  if (NIGHT_SCENE) {
+    history.pushState({ nh: 1 }, ''); // so that back pauses instead of leaving
+    setTimeout(() => say(NL.lines.open, 3.6), 1200);
+    night.readyAt = performance.now() + 4800; night.lastAct = night.readyAt;
+    setTimeout(() => { hintCount(); night.lastAct = performance.now(); }, 5200);
+  }
 });
-ui.resume.addEventListener('click', () => tryLock());
+ui.resume.addEventListener('click', () => (NIGHT_SCENE ? resumeNight() : tryLock()));
 
 if (DEBUG) {
   window.__dbg = {
@@ -2070,6 +2291,22 @@ if (DEBUG) {
     oil: (v) => { lamp.oil = v; },
     relight: () => lampAction(),
     night: () => { nightT = 1; },
+    // the night scene
+    nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
+      cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), counted: c.counted })) }),
+    tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },
+    eyes: () => cows.map((c) => [+c.y0.toFixed(2), +c.mesh.rotation.x.toFixed(2), +c.eyeWorld.y.toFixed(2), +c.eyeWorld.z.toFixed(2), +c.mesh.position.z.toFixed(2)]),
+    screenOf: (i) => { const v = cows[i].eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+    tapAt: (x, y) => nightTap(x, y),
+    next: () => nextStation(),
+    ready: () => { night.readyAt = 0; },
+    pause: () => pauseNight(), resume: () => resumeNight(),
+    // for each cow: where its head is on screen, and whether another cow's body or head is in the way
+    seen: () => cows.map((c, i) => { const h = c.headWorld, v = h.clone().project(camera), d = h.clone().sub(camera.position), L = d.length(); d.divideScalar(L);
+      let by = null; for (const [j, o] of cows.entries()) { if (o === c) continue; for (const b of o.blockers) { const t = raySphere(camera.position, d, new THREE.Vector3(b.x, o.y0 + 0.95 * o.s, b.z), 0.43 * o.s); if (t < L - 0.3) by = j; }
+        const t = raySphere(camera.position, d, o.headWorld, 0.24 * o.s); if (t < L - 0.3) by = j; }
+      return { i, st: c.station, y: +h.y.toFixed(2), sx: +v.x.toFixed(2), sy: +v.y.toFixed(2), by }; }),
+    eyeUp: (h, z, pitch) => { dbgEyeUp = h; if (z !== undefined) player.pos.z = z; if (pitch !== undefined) player.pitch = pitch; },
     arm: () => ({ W: arm.W.toArray(), E: arm.E.toArray(), f: arm.f.toArray(), u: arm.u.toArray(), hp: handPivot.position.toArray(), hq: handPivot.quaternion.toArray(), lq: lanternSwing.quaternion.toArray(), lp: lanternLight.position.toArray(), exp: finalPass.uniforms.uExp.value, adapt }),
   };
 }
