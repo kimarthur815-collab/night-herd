@@ -1,13 +1,15 @@
 # Night Herd 인수인계 (새 대화용)
 
-마지막 갱신: 2026-11-27 밤. 이 문서는 새 대화의 Claude가 처음 읽을 요약이에요. 자세한 결정은 기획서가 기준이에요.
+마지막 갱신: 2026-11-27 밤. 이 문서는 새 대화의 Claude가 처음 읽을 요약이에요. 자세한 결정은 기획서가 기준이에요(새 대화에서는 사본 docs/plan.md를 봐요).
 
 ## 링크
 
 - 사이트 (GitHub Pages): https://kimarthur815-collab.github.io/night-herd/
 - 저장소: https://github.com/kimarthur815-collab/night-herd (main 브랜치에 push하면 사이트에 반영)
-- 기획서 (Claude Docs): https://claude.ai/artifact/CbBLvRCJQx9vnNiDK2H3iG (doc id `5dda3015-6b50-428c-8d78-132efa27bcf1`, 본문 노드 `e19c8057-2bdb`)
-- 페이지 (claude.ai 아티팩트, 사이트와 같은 내용)
+- **기획서 사본 (마크다운): [docs/plan.md](docs/plan.md)** — Claude Docs 기획서(rev 109) 본문을 줄이거나 요약하지 않고 미정 항목까지 그대로 옮긴 사본이에요. 새 대화에서는 Claude Docs와 아티팩트 페이지가 열리지 않으니, 기획서 내용은 이 파일을 기준으로 봐요. 그림 1장(야간 소떼 레퍼런스 사진)만 옮기지 못했어요.
+- 기획서 원본 (Claude Docs, 새 대화에서는 안 열림): https://claude.ai/artifact/CbBLvRCJQx9vnNiDK2H3iG (doc id `5dda3015-6b50-428c-8d78-132efa27bcf1`, 본문 노드 `e19c8057-2bdb`)
+- 페이지는 새 대화에서 아티팩트가 안 열리니 사이트 주소로 봐요: 괴물 후보 `monsters/`, 리볼버 `revolvers/`, 랜턴 슬라이스 `lantern/`, 첫 번째 슬라이스 `slice/`, 걷기 슬라이스 `walk/` (모두 위 사이트 주소 뒤에 붙임)
+- 페이지 (claude.ai 아티팩트, 사이트와 같은 내용, 새 대화에서는 안 열림)
   - 괴물 후보: https://claude.ai/artifact/1N4VbdNgJnpuzva2epGMwG (slug `02f0c597-4b49-4734-b17a-f7d291a63943`)
   - 리볼버 후보: https://claude.ai/artifact/Q656p6Ceg3tKsT3CC3yjhk (slug `baf76f53-b28c-488a-9592-1922007879a3`)
   - 랜턴 슬라이스: https://claude.ai/artifact/1gkU7qWi7KvkxgSNiXgaMH (slug `058ccb7b-e388-4463-ac85-c4f89abdab94`)
