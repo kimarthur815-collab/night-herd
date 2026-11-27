@@ -7,6 +7,7 @@ import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fbm } from './cow.js';
 
 const DEBUG = location.hash === '#debug';
@@ -180,12 +181,15 @@ async function loadVariants(onProgress) {
 
 
 // ---------------- environment ----------------
-// no invisible walls: the ground, grass, sky and horizon travel with the player, so the prairie never ends
+// no invisible walls: the ground, grass, plants, sky and horizon travel with the player, so the desert never ends
 const WORLD_FOLLOW = [];
 const GRASS_U = { uGC: { value: new THREE.Vector2(0, -4) } };
+const PLANT_PER = 120; // the cactus and brush field repeats every 120 m around you
+const PLANT_U = { uPC: { value: new THREE.Vector2() } };
 function followWorld(x, z) {
   for (const o of WORLD_FOLLOW) { o.position.x = x; o.position.z = z; }
   GRASS_U.uGC.value.set(x, z - 4); // grass window, biased toward the herd
+  PLANT_U.uPC.value.set(x, z);
 }
 function makeGround() {
   const g = new THREE.PlaneGeometry(400, 400, 8, 8); // flat; shading is anchored to the world, not the mesh
@@ -197,7 +201,12 @@ function makeGround() {
       .replace('#include <color_fragment>', `#include <color_fragment>
         { vec3 q = vec3(vWP2.x, 0.0, vWP2.z);
           float a = vnoise3(q*0.35)*0.5+0.5; float b = vnoise3(q*2.5)*0.5+0.5; float c2 = vnoise3(q*14.0)*0.5+0.5; float c3 = vnoise3(q*55.0)*0.5+0.5;
-          vec3 col = mix(vec3(0.09,0.075,0.06), vec3(0.13,0.125,0.08), smoothstep(0.35,0.7,a*0.6+b*0.4));
+          // Sonoran desert floor: tan gravel, pale sandy washes, dark and light pebbles
+          vec3 col = mix(vec3(0.15,0.125,0.095), vec3(0.21,0.175,0.13), smoothstep(0.35,0.7,a*0.6+b*0.4));
+          float wash = smoothstep(0.6, 0.8, vnoise3(vec3(q.x*0.07, 0.0, q.z*0.22))*0.5+0.5);
+          col = mix(col, vec3(0.26,0.225,0.17), wash*0.55);
+          float peb = vnoise3(q*38.0)*0.5+0.5;
+          col *= 0.86 + 0.26*smoothstep(0.5, 0.8, peb) - 0.2*smoothstep(0.72, 0.9, c3);
           float burnt = 1.0 - smoothstep(0.5, 1.2, length(vWP2.xz - vec2(${FIRE_POS.x.toFixed(2)}, ${FIRE_POS.z.toFixed(2)})));
           col = mix(col, vec3(0.03,0.025,0.02), burnt);
           col *= (0.7 + 0.45*c2) * (0.85 + 0.3*c3);
@@ -220,7 +229,7 @@ function makeGrass(count) {
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
   g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
   g.setIndex(idx);
-  const m = new THREE.MeshStandardMaterial({ color: 0x7c7456, roughness: 0.95, side: THREE.DoubleSide });
+  const m = new THREE.MeshStandardMaterial({ color: 0x8d7c55, roughness: 0.95, side: THREE.DoubleSide }); // dry desert bunchgrass
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uGC = GRASS_U.uGC;
     // each blade keeps its place in the world but wraps by whole tiles to stay near the player
@@ -244,7 +253,7 @@ function makeGrass(count) {
     const x = (Math.random() - 0.5) * 28, z = 5 - Math.random() * 30;
     if (Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 1.1) continue;
     const clump = fbm(x * 0.6, 0.3, z * 0.6, 3) * 0.5 + 0.5;
-    if (Math.random() > clump * 1.4 - 0.15) continue;
+    if (Math.random() > Math.pow(clump, 2.2) * 2.2 - 0.12) continue; // tufts with bare ground between
     const h = (0.03 + 0.2 * Math.pow(Math.random(), 2.0) * clump) * (1 + Math.max(0, -z - 10) * 0.02);
     e.set((Math.random() - 0.5) * 0.9, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.9);
     q.setFromEuler(e); s.set(1 + Math.random(), h, h); v.set(x, 0, z);
@@ -256,37 +265,184 @@ function makeGrass(count) {
   return mesh;
 }
 
-function makeTrees() {
+// the horizon: two ranges of jagged southern-Arizona mountains, dark against the night haze
+const RIDGE_U = { uHaze: { value: new THREE.Color() } };
+function makeRidges() {
   const grp = new THREE.Group();
-  const mat = new THREE.MeshBasicMaterial({ color: 0x000000, fog: false, side: THREE.DoubleSide });
-  const R = 170, segs = 360, pos = [], idx = [];
-  for (let i = 0; i <= segs; i++) {
-    const a = -Math.PI + (2 * Math.PI) * (i / segs), x = Math.sin(a) * R, z = -Math.cos(a) * R;
-    const hgt = Math.max(0.6, 4.5 + 7 * fbm(a * 9.0, 2.1, 0.7, 4) + 5 * Math.max(0, fbm(a * 40.0, 7.3, 1.1, 2)));
-    pos.push(x, -2, z, x, hgt, z);
-    if (i < segs) { const b = 2 * i; idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setIndex(idx);
-  grp.add(new THREE.Mesh(g, mat));
-  const spots = [[-31, -62, 9], [24, -70, 11], [55, -95, 10], [-48, 40, 12], [30, 55, 10]];
-  const blobs = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(1, 1), mat, spots.length * 70);
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.15, 0.35, 1, 6), mat, spots.length);
-  const M = new THREE.Matrix4(), Qt = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3(), E = new THREE.Euler();
-  let k = 0;
-  spots.forEach(([x, z, h], ti) => {
-    M.compose(P.set(x, h * 0.27, z), Qt.identity(), S.set(1, h * 0.55, 1)); trunks.setMatrixAt(ti, M);
-    for (let i = 0; i < 70; i++) {
-      const r = h * (0.04 + Math.random() * 0.07), ang = Math.random() * Math.PI * 2, rad = Math.sqrt(Math.random()) * h * 0.38;
-      E.set(Math.random() * 3, Math.random() * 3, Math.random() * 3);
-      M.compose(P.set(x + Math.cos(ang) * rad, h * (0.5 + Math.random() * 0.5) - rad * 0.3, z + Math.sin(ang) * rad * 0.6), Qt.setFromEuler(E), S.set(r * (0.8 + Math.random() * 0.8), r * (0.5 + Math.random() * 0.5), r));
-      blobs.setMatrixAt(k++, M);
-    }
+  const mat = new THREE.ShaderMaterial({
+    fog: false, side: THREE.DoubleSide, uniforms: RIDGE_U,
+    vertexShader: 'attribute float aT; varying float vT; void main(){ vT = aT; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
+    fragmentShader: 'uniform vec3 uHaze; varying float vT; void main(){ gl_FragColor = vec4(uHaze * vT, 1.0); }',
   });
-  grp.add(blobs, trunks);
+  const layer = (R, base, amp, seed, tBottom, tTop) => {
+    const segs = 420, pos = [], tt = [], idx = [];
+    for (let i = 0; i <= segs; i++) {
+      const a = -Math.PI + (2 * Math.PI) * (i / segs), x = Math.sin(a) * R, z = -Math.cos(a) * R;
+      const ridge = 1 - Math.abs(fbm(a * 5.0, seed, 0.7, 4)); // sharp crests
+      const h = base + amp * ridge * ridge + 2.2 * fbm(a * 60.0, seed + 3.1, 1.3, 2);
+      pos.push(x, -4, z, x, h, z); tt.push(tBottom, tTop);
+      if (i < segs) { const b = 2 * i; idx.push(b, b + 2, b + 1, b + 1, b + 2, b + 3); }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('aT', new THREE.Float32BufferAttribute(tt, 1));
+    g.setIndex(idx);
+    return new THREE.Mesh(g, mat);
+  };
+  grp.add(layer(190, 8, 30, 4.2, 0.95, 0.55), layer(150, 3, 17, 9.7, 0.85, 0.12));
   WORLD_FOLLOW.push(grp);
   return grp;
+}
+
+// cactus and brush: instanced, each kept within half a tile of the player, sinking out of sight near the tile edge
+function wrapPlantMaterial(mat, key) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uPC = PLANT_U.uPC;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec2 uPC;')
+      .replace('#include <project_vertex>', `vec4 mvPosition = vec4(transformed, 1.0);
+        #ifdef USE_INSTANCING
+        { mat4 im = instanceMatrix; float per = ${PLANT_PER.toFixed(1)};
+          im[3].xz += floor((uPC - im[3].xz) / per + 0.5) * per;
+          vec2 off = abs(im[3].xz - uPC);
+          mvPosition.xyz *= 1.0 - smoothstep(per * 0.36, per * 0.48, max(off.x, off.y));
+          mvPosition = im * mvPosition; }
+        #endif
+        mvPosition = modelViewMatrix * mvPosition;
+        gl_Position = projectionMatrix * mvPosition;`);
+    // only half fogged, so at night they stand as dark shapes against the haze instead of fading into pale ghosts
+    sh.fragmentShader = sh.fragmentShader.replace('#include <fog_fragment>', `#ifdef USE_FOG
+        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor * 0.5);
+        #endif`);
+  };
+  mat.customProgramCacheKey = () => key;
+  return mat;
+}
+function saguaroGeometry(h, arms, seed) {
+  const R0 = 0.2 + 0.025 * h, prof = [];
+  for (let i = 0; i <= 10; i++) prof.push(new THREE.Vector2(R0 * (1 - 0.06 * (i / 10)), (h - R0) * (i / 10)));
+  for (let i = 1; i <= 6; i++) { const a = (i / 6) * Math.PI / 2; prof.push(new THREE.Vector2(R0 * 0.94 * Math.cos(a) + 1e-3, h - R0 + R0 * 0.94 * Math.sin(a))); }
+  const parts = [new THREE.LatheGeometry(prof, 36)];
+  for (let k = 0; k < arms; k++) {
+    const ang = seed * 2.1 + k * (2 * Math.PI / arms) + Math.sin(seed + k) * 0.6;
+    const dx = Math.cos(ang), dz = Math.sin(ang);
+    const ya = h * (0.38 + 0.18 * ((seed * 7 + k * 3) % 5) / 5), up = h * (0.22 + 0.12 * ((seed + k) % 3) / 3), out = 0.55 + 0.25 * ((k + seed) % 2);
+    const Ra = R0 * 0.62;
+    const curve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(dx * R0 * 0.3, ya, dz * R0 * 0.3), new THREE.Vector3(dx * out * 0.7, ya + 0.04, dz * out * 0.7),
+      new THREE.Vector3(dx * out, ya + 0.35, dz * out), new THREE.Vector3(dx * out * 1.02, ya + up * 0.7, dz * out * 1.02), new THREE.Vector3(dx * out, ya + up, dz * out),
+    ]);
+    parts.push(new THREE.TubeGeometry(curve, 20, Ra, 12, false));
+    const cap = new THREE.SphereGeometry(Ra, 12, 8); cap.translate(dx * out, ya + up, dz * out); parts.push(cap);
+  }
+  const g = mergeGeometries(parts);
+  // ribs: ripple the surface around the vertical axis
+  const P = g.attributes.position;
+  for (let i = 0; i < P.count; i++) {
+    const x = P.getX(i), z = P.getZ(i), r = Math.hypot(x, z);
+    if (r < R0 * 1.05 && r > 1e-4) { const k = 1 + 0.07 * Math.cos(Math.atan2(z, x) * 12); P.setX(i, x * k); P.setZ(i, z * k); }
+  }
+  g.computeVertexNormals();
+  return g;
+}
+function ocotilloGeometry(seed) {
+  const parts = [];
+  const n = 9 + (seed % 4);
+  for (let i = 0; i < n; i++) {
+    const len = 2.6 + 2.2 * ((Math.sin(seed * 13.7 + i * 4.1) + 1) / 2);
+    const g = new THREE.CylinderGeometry(0.012, 0.035, len, 5, 3, false);
+    g.translate(0, len / 2, 0);
+    const lean = 0.18 + 0.4 * ((Math.sin(seed + i * 2.3) + 1) / 2), turn = (i / n) * Math.PI * 2 + seed;
+    g.rotateZ(lean); g.rotateY(turn);
+    parts.push(g);
+  }
+  return mergeGeometries(parts);
+}
+function shrubGeometry(seed) {
+  const parts = [];
+  for (let i = 0; i < 5; i++) {
+    const r = 0.32 + 0.22 * ((Math.sin(seed * 3.3 + i * 1.7) + 1) / 2);
+    const g = new THREE.IcosahedronGeometry(r, 1);
+    g.scale(1, 0.75, 1);
+    g.translate(Math.cos(i * 2.4 + seed) * 0.35, r * 0.6 + 0.05 * i, Math.sin(i * 2.4 + seed) * 0.35);
+    parts.push(g);
+  }
+  return mergeGeometries(parts.map((p) => { p.deleteAttribute('uv'); return p; }));
+}
+const SAGUAROS = []; // base positions and trunk radii, so you can't walk through them
+function makeDesertPlants() {
+  const grp = new THREE.Group();
+  const clear = (x, z) => x > -8 && x < 9 && z > -17 && z < 6; // the camp and the herd stay open
+  const spot = () => { let x, z; do { x = (Math.random() - 0.5) * PLANT_PER; z = (Math.random() - 0.5) * PLANT_PER; } while (clear(x, z)); return [x, z]; };
+  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
+  const cactusMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.15, 0.19, 0.12), roughness: 0.8 }), 'plant-cactus');
+  [[7.5, 2, 1], [9.5, 3, 2], [4.5, 0, 3], [6.2, 1, 4]].forEach(([h, arms, seed], v) => {
+    const mesh = new THREE.InstancedMesh(saguaroGeometry(h, arms, seed), cactusMat, 12);
+    for (let i = 0; i < 12; i++) {
+      const [x, z] = spot(), s = 0.8 + Math.random() * 0.4;
+      M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * Math.PI * 2), S.set(s, s, s));
+      mesh.setMatrixAt(i, M);
+      SAGUAROS.push({ x, z, r: (0.2 + 0.025 * h) * s + 0.05 });
+    }
+    mesh.frustumCulled = false; grp.add(mesh);
+  });
+  const stemMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.12, 0.1, 0.08), roughness: 0.9 }), 'plant-stem');
+  [1, 2].forEach((seed) => {
+    const mesh = new THREE.InstancedMesh(ocotilloGeometry(seed), stemMat, 8);
+    for (let i = 0; i < 8; i++) { const [x, z] = spot(); M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * 6.28), S.setScalar(0.8 + Math.random() * 0.4)); mesh.setMatrixAt(i, M); }
+    mesh.frustumCulled = false; grp.add(mesh);
+  });
+  const brushMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.1, 0.11, 0.065), roughness: 1.0 }), 'plant-brush');
+  [1, 2, 3].forEach((seed) => {
+    const n = 90, mesh = new THREE.InstancedMesh(shrubGeometry(seed), brushMat, n);
+    for (let i = 0; i < n; i++) { const [x, z] = spot(); M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * 6.28), S.setScalar(0.6 + Math.random() * 0.9)); mesh.setMatrixAt(i, M); }
+    mesh.frustumCulled = false; grp.add(mesh);
+  });
+  return grp;
+}
+
+// tumbleweeds: they rest, and roll past when a gust comes through
+const WIND = new THREE.Vector3(1, 0, 0.35).normalize();
+const tumbles = [];
+function makeTumbleweeds(scene) {
+  const parts = [];
+  for (let i = 0; i < 52; i++) {
+    const len = 0.16 + Math.random() * 0.3, g = new THREE.CylinderGeometry(0.005, 0.008, len, 4, 1, true);
+    const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
+    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
+    const c = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(0.05 + Math.random() * 0.17);
+    g.translate(c.x, c.y, c.z);
+    parts.push(g);
+  }
+  const geo = mergeGeometries(parts);
+  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.4, 0.33, 0.21), roughness: 1, side: THREE.DoubleSide });
+  for (let i = 0; i < 4; i++) {
+    const s = 0.8 + Math.random() * 0.5, mesh = new THREE.Mesh(geo, mat);
+    mesh.scale.setScalar(s); scene.add(mesh);
+    tumbles.push({ mesh, r: 0.28 * s, pos: new THREE.Vector3(), speed: 0, k: 0.8 + Math.random() * 0.4, side: Math.random() - 0.5, phase: Math.random() * 6 });
+  }
+}
+function spawnTumble(t, initial) {
+  const back = initial ? (Math.random() - 0.5) * 20 : 12 + Math.random() * 6, lat = (Math.random() - 0.5) * 24;
+  t.pos.set(camera.position.x - WIND.x * back + WIND.z * lat, t.r, camera.position.z - WIND.z * back - WIND.x * lat);
+  t.speed = 0;
+}
+const _tq = new THREE.Quaternion(), _tAxis = new THREE.Vector3(WIND.z, 0, -WIND.x);
+function tumbleStep(dt, gust) {
+  for (const t of tumbles) {
+    const dx = t.pos.x - camera.position.x, dz = t.pos.z - camera.position.z;
+    if (Math.hypot(dx, dz) > 28 || dx * WIND.x + dz * WIND.z > 20) spawnTumble(t, false);
+    t.speed = damp(t.speed, (gust ? 3.0 : 0.12) * t.k, gust ? 1.4 : 0.5, dt);
+    t.pos.x += (WIND.x + WIND.z * t.side * 0.2) * t.speed * dt;
+    t.pos.z += (WIND.z - WIND.x * t.side * 0.2) * t.speed * dt;
+    // it bounces off cows and the fire
+    const bump = (cx, cz, r) => { const ex = t.pos.x - cx, ez = t.pos.z - cz, d = Math.hypot(ex, ez), m = r + t.r; if (d < m && d > 1e-4) { t.pos.x = cx + (ex / d) * m; t.pos.z = cz + (ez / d) * m; t.speed *= 0.6; } };
+    for (const c of cows) for (const b of c.blockers) bump(b.x, b.z, b.r);
+    bump(FIRE_POS.x, FIRE_POS.z, 0.7);
+    t.phase += dt * t.speed * 2.4;
+    t.mesh.position.set(t.pos.x, t.r + Math.abs(Math.sin(t.phase)) * 0.22 * Math.min(1, t.speed / 2.5), t.pos.z);
+    t.mesh.quaternion.premultiply(_tq.setFromAxisAngle(_tAxis, (t.speed * dt) / t.r));
+  }
 }
 
 function makeSky() {
@@ -840,15 +996,17 @@ vmScene.add(vmFlame, vmFire, new THREE.HemisphereLight(0x1a2030, 0x080604, 0.12)
 
 // ---------------- scene assembly ----------------
 const sky = makeSky();
-const trees = makeTrees();
-scene.add(sky, makeGround(), makeGrass(42000), trees, makeCampfire());
+const ridges = makeRidges();
+scene.add(sky, makeGround(), makeGrass(20000), ridges, makeDesertPlants(), makeCampfire());
 const LANTERN_I = 9.5;
 const lanternLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), LANTERN_I, 40, 1.4);
 const fireLight = new THREE.PointLight(new THREE.Color(1.0, 0.52, 0.2), 9, 7.5, 2); // a campfire only lights the camp; the herd stays in the dark
 fireLight.position.copy(FIRE_POS).add(new THREE.Vector3(0, 0.5, 0));
 const moon = new THREE.DirectionalLight(new THREE.Color(0.55, 0.62, 0.8), 0.05);
 moon.position.set(-20, 25, -45);
-scene.add(lanternLight, fireLight, moon, new THREE.HemisphereLight(0x0c1018, 0x040302, 0.05));
+const hemi = new THREE.HemisphereLight(0x0c1018, 0x040302, 0.05);
+scene.add(lanternLight, fireLight, moon, hemi);
+makeTumbleweeds(scene);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
@@ -950,6 +1108,10 @@ function resolveCollisions(p) {
   };
   for (let it = 0; it < 3; it++) {
     push(FIRE_POS.x, FIRE_POS.z, 0.62);
+    for (const sg of SAGUAROS) {
+      const pc = PLANT_U.uPC.value;
+      push(sg.x + Math.round((pc.x - sg.x) / PLANT_PER) * PLANT_PER, sg.z + Math.round((pc.y - sg.z) / PLANT_PER) * PLANT_PER, sg.r);
+    }
     for (const c of cows) {
       for (const b of c.blockers) push(b.x, b.z, b.r);
       push(c.headWorld.x, c.headWorld.z, 0.24 * c.s);
@@ -1249,7 +1411,7 @@ function holdStep(dt, time, speed, bobA) {
 const FRAME_MS = 1000 / 60;
 let nextDue = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, slow = 0, pendingResize = false;
 const fwd = new THREE.Vector3(), tmpV = new THREE.Vector3(), flameCam = new THREE.Vector3(), fireCam = new THREE.Vector3();
-const NIGHT = { fogC: new THREE.Color(0.036, 0.037, 0.042), fogD: 0.05, zen: new THREE.Color(0.0042, 0.0045, 0.0056) };
+const NIGHT = { fogC: new THREE.Color(0.062, 0.064, 0.073), fogD: 0.05, zen: new THREE.Color(0.0065, 0.007, 0.0088) };
 const DAY = { fogC: new THREE.Color(0.0035, 0.004, 0.0055), fogD: 0.009, hor: new THREE.Color(0.028, 0.03, 0.038), zen: new THREE.Color(0.002, 0.0022, 0.003) };
 function frame(now) {
   if (!document.hidden) requestAnimationFrame(frame);
@@ -1288,6 +1450,7 @@ function frame(now) {
 
   // the lantern
   lampStep(dt);
+  tumbleStep(dt, lamp.gustT >= 0);
   holdStep(dt, time, speed, bobA);
   lanternSwing.updateMatrixWorld(true);
   flameCam.copy(FLAME_LOCAL); lanternSwing.localToWorld(flameCam); // camera space (vm scene root = camera)
@@ -1328,7 +1491,8 @@ function frame(now) {
   scene.fog.density = lerp(DAY.fogD + 0.004 * countT, NIGHT.fogD, n);
   sky.material.uniforms.uHor.value.copy(DAY.hor).lerp(NIGHT.fogC, n);
   sky.material.uniforms.uZen.value.copy(DAY.zen).lerp(NIGHT.zen, n);
-  trees.visible = n < 0.12;
+  RIDGE_U.uHaze.value.copy(scene.fog.color);
+  moon.intensity = lerp(0.05, 0.24, n); hemi.intensity = lerp(0.05, 0.07, n);
   U.uEyeGain.value = 120 * lamp.level;
   U.uEyeSelf.value = 5.0 * Math.min(1, n * 2.2);
   finalPass.uniforms.uSeed.value = (now * 0.061) % 997;
@@ -1375,6 +1539,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { la
         ai: { t: rand(0, 3), yaw: rand(-0.4, 0.4), pitch: rand(-0.9, 0.0), tYaw: 0, tPitch: -0.5, flick: 0 },
       });
     });
+    for (const t of tumbles) spawnTumble(t, true);
     renderer.compile(scene, camera);
     renderer.compile(vmScene, vmCamera);
     ui.loadTxt.textContent = TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
@@ -1429,6 +1594,8 @@ if (DEBUG) {
   window.__dbg = {
     state: () => ({ mode: lamp.mode, level: lamp.level, oil: lamp.oil, nightT, raiseT, count, countT, revealT, ended, sub: ui.sub.textContent, pos: player.pos.toArray() }),
     countAll: () => { countReadyAt = 0; for (const c of cows) c.lit = 2; },
+    setCount: (n) => { count = n; },
+    tumbles: () => tumbles.map((t) => [+t.pos.x.toFixed(1), +t.pos.z.toFixed(1), +t.speed.toFixed(2)]),
     lightAt: (i) => lanternLightAt(cows[i].mesh.localToWorld(new THREE.Vector3(0, 1, 0))),
     goto: (x, z, yaw, pitch) => { player.pos.set(x, 0, z); player.yaw = yaw; player.pitch = pitch ?? 0; },
     walk: (code, ms) => { keys.add(code); setTimeout(() => keys.delete(code), ms); },
