@@ -625,6 +625,11 @@ class Sound {
       o.connect(f).connect(gg).connect(this.master); o.start(t + dt); o.stop(t + dt + 0.2);
     }
   }
+  hush(on) { // everything but the monster drops out (and comes back after)
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime, g = this.master.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
+    g.setTargetAtTime(on ? 0.0001 : 0.9 * (NIGHT_SCENE ? NL.volume : 1), t, on ? 0.05 : 0.5);
+  }
   silenceCrickets() {
     if (!this.ctx) return;
     this.cricketOn = false;
@@ -1657,20 +1662,26 @@ function beginScare() {
   if (!M) { hurt(); return; } // not loaded yet (slow connection): it still hurts
   night.scaring = true; ui.sub.classList.remove('show'); subTimer = 0;
   M.own.uLightP.value.copy(lanternLight.position);
-  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)));
+  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d });
 }
 function scareFrame(dt) {
   const M = monster && monster.mon.M;
   if (!night.scaring || !M) return;
   M.own.uLightP.value.copy(lanternLight.position);
   const r = scareStep(M, camera, dt, {
-    roar: () => { if (msnd) { msnd.freeze('none'); msnd.pounce(M.info.roar); } buzz(450); },
+    roar: () => { if (msnd) { msnd.freeze('none'); msnd.sting(NL.scare.sting); msnd.pounce(M.info.roar); } buzz(NL.scare.buzz); night.recoilT = 0; },
     cut: () => { if (msnd) { msnd.snap(); msnd.cut({ muffle: false }); } buzz(220); hurt(); }, // the roar keeps going at full in the dark
-    back: () => { if (msnd) msnd.restore(); },
-    done: () => { night.scaring = false; night.shake = 0; finalPass.uniforms.uFade.value = 0; if (hp <= 0) night.endT = 0; },
+    back: () => { if (msnd) msnd.restore(); sound.hush(false); night.hushed = false; },
+    done: () => { night.scaring = false; night.shake = 0; finalPass.uniforms.uFade.value = 0; scareLight.intensity = 0; if (hp <= 0 || night.endAfter) night.endT = 0; },
   });
-  if (r) { finalPass.uniforms.uFade.value = r.fade; night.shake = r.shake; }
+  if (r) {
+    finalPass.uniforms.uFade.value = r.fade; night.shake = r.shake * NL.scare.shake;
+    scareLight.intensity = r.fade < 1 ? NL.scare.light : 0; // the lantern's light full on the face
+    scareLight.position.copy(camera.position).addScaledVector(fwd, 0.15).addScaledVector(camera.up, -0.2);
+  }
 }
+const scareLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), 0, 3, 2);
+if (NIGHT_SCENE) scene.add(scareLight);
 function hurt() { hp = Math.max(0, hp - 1); if (hp <= 0 && !night.scaring) night.endT = 0; }
 // hurt: no bar; the heart, the edges of sight, the shaking hands (more with each lost part)
 let hurtK = 0;
@@ -1811,9 +1822,14 @@ function nextStation() {
   if (fight.on) return; // 임시: no walking away from it
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
-  if (night.i === lastStation()) { night.endT = 0; return; } // 임시: going on from the last place ends the night (stage 1)
+  if (night.passed) { night.scareAt = Math.min(night.scareAt, performance.now() + 300); return; } // it is behind you: you don't get away first
+  const leaving = monster && !monster.gone && !fight.on && monster.station === night.i;
+  if (night.i === lastStation()) {
+    if (leaving) { night.passed = true; night.endAfter = true; night.scareAt = performance.now() + rand(...NL.scare.lastWait) * 1000; return; }
+    night.endT = 0; return; // 임시: going on from the last place ends the night
+  }
+  if (leaving) night.passed = true; // you leave it behind: it comes for you once you are at the next place, counting
   night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
-  if (monster && !monster.gone && monster.station === night.i) night.scarePending = true; // you leave it behind: it comes for you
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
 // where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
@@ -1821,11 +1837,10 @@ function nightMove(dt) {
   let speed = 0;
   if (night.walking && !night.scaring) {
     night.t += dt;
-    if (night.scarePending && night.t >= NL.scare.after) { night.scarePending = false; beginScare(); }
     const k = Math.min(1, night.t / night.dur), nx = lerp(night.x0, night.x1, smooth(k));
     speed = Math.abs(nx - player.pos.x) / Math.max(dt, 1e-3);
     player.pos.x = nx;
-    if (k >= 1) { night.walking = false; night.i++; night.lastAct = performance.now(); }
+    if (k >= 1) { night.walking = false; night.i++; night.lastAct = performance.now(); if (night.passed && !night.scareAt) night.scareAt = performance.now() + rand(...NL.scare.wait) * 1000; }
   }
   if (TOUCH) {
     const turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
@@ -1838,6 +1853,10 @@ function nightMove(dt) {
   camera.position.set(player.pos.x + Math.cos(player.stepPhase) * 0.012 * bobA * cy, EYE_H + dbgEyeUp + Math.abs(Math.sin(player.stepPhase)) * 0.025 * bobA, player.pos.z - Math.cos(player.stepPhase) * 0.012 * bobA * sy);
   followWorld(camera.position.x, camera.position.z);
   camera.rotation.set(player.pitch, player.yaw, 0);
+  if (night.recoilT !== undefined) { // the body jerks back: the head snaps up and away, then settles
+    night.recoilT += dt; const R = NL.scare.recoil, t = night.recoilT, r = t < 0.06 ? t / 0.06 : Math.exp(-(t - 0.06) / R.time);
+    camera.rotation.x += R.pitch * r; camera.position.addScaledVector(fwd, -R.back * r); if (r < 0.01) night.recoilT = undefined;
+  }
   if (night.shake > 0) { const k = night.shake * 0.02; camera.position.x += (Math.random() - 0.5) * k; camera.position.y += (Math.random() - 0.5) * k; camera.rotation.z += (Math.random() - 0.5) * k * 2.5; }
   camera.updateMatrixWorld(true);
   camera.getWorldDirection(fwd);
@@ -1857,6 +1876,10 @@ function nightStep(dt) {
     return;
   }
   scareFrame(dt); hurtFrame(dt);
+  if (night.passed && night.scareAt && !night.scaring && monster && !monster.gone && !paused) {
+    if (!night.hushed && now >= night.scareAt - NL.scare.hush * 1000) { night.hushed = true; sound.hush(true); if (msnd) msnd.freeze('none'); } // everything goes quiet
+    if (now >= night.scareAt) { night.scareAt = 0; night.passed = false; beginScare(); }
+  }
   if (now < night.readyAt || night.walking) return;
   if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
   if (fight.on) return;
@@ -2572,7 +2595,7 @@ if (DEBUG) {
     relight: () => lampAction(),
     night: () => { nightT = 1; },
     // the night scene
-    hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring,
+    hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring, scareIn: () => night.scareAt ? Math.round(night.scareAt - performance.now()) : null, passed: () => !!night.passed,
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },

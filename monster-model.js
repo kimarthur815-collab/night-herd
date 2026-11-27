@@ -166,8 +166,8 @@ function faceTarget(M, camera, d, max) {
   _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
 }
 // start it from where the thing stood (base: ground point; qs: turned to face you)
-export function startScare(M, base, qs) {
-  M.sc = { t: 0, fired: {}, base: base.clone(), qs: qs.clone(), thr: { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() } };
+export function startScare(M, base, qs, opts = {}) {
+  M.sc = { t: 0, fired: {}, base: base.clone(), qs: qs.clone(), d: opts.d ?? FAST.d, thr: { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() } };
   M.root.visible = true;
 }
 // one step; events: roar (it comes), cut (the jaws shut: black), back (light returns), done. Returns { fade, shake } or null when over
@@ -183,7 +183,7 @@ export function scareStep(M, camera, dt, on) {
   if (E >= back1) { M.sc = null; M.root.visible = false; on.done(); return null; }
   if (E >= cutT) return { fade: E < back0 ? 1 : 1 - ease((E - back0) / (back1 - back0)), shake: 0 };
   const H0 = _h0.fromArray(M.meta.headPivot), max = split ? 0.6 : 0.95;
-  faceTarget(M, camera, FAST.d, max);
+  faceTarget(M, camera, s.d, max);
   const u = easeOut(E / FAST.travel);
   const start = _q.copy(H0).applyQuaternion(s.qs).add(s.base);
   const P = _p.copy(start).lerp(_tgt, u);

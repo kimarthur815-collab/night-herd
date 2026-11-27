@@ -5,6 +5,8 @@ export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 날카로운 포효'
 export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' }; // ③ chosen
 // scream-like candidates (rendered to files for the ear first)
 export const SCREAM_KINDS = { higher: '① 지금 포효를 더 높게', metal: '② 쇠 긁는 기계 비명', tear: '③ 찢어지는 고음 비명', overGrowl: '④ 고음 비명 + 낮은 으르렁', chorus: '⑤ 여러 목소리 겹친 비명', swell: '⑥ 빨려 들듯 차오르는 비명' };
+// a hit the instant it is there (candidates for the ear)
+export const STING_KINDS = { boom: '① 쾅 (묵직한 타격)', slam: '② 쾅 (나무와 쇠가 부딪힘)', stab: '③ 찢어지는 화음 한 방' };
 export const SCARE_KINDS = { shake: '① 얼굴이 확 튀어나와 마구 흔들림', fast: '② 멀리서 순식간에', side: '③ 화면 옆에서 갑자기' };
 
 export function makeMonsterSound(opt = {}) {
@@ -247,6 +249,26 @@ export function makeMonsterSound(opt = {}) {
     tone(t + 0.35, 0.13, { f0: 62, f1: 42, gain: 0.45, att: 0.005 }); tone(t + 0.52, 0.15, { f0: 56, f1: 38, gain: 0.32, att: 0.005 });
   }
   function snap() { if (ready()) crunch(a.currentTime + 0.005, 0.75); } // the jaws meeting on you
+  // the hit as it appears: ① a heavy blow with a body a phone speaker still carries, ② wood and iron slammed, ③ a harsh chord
+  function sting(kind, t) {
+    if (!ready()) return;
+    if (t === undefined) t = a.currentTime + 0.003;
+    if (kind === 'boom') {
+      tone(t, 0.45, { f0: 160, f1: 55, gain: 1.0, att: 0.002 });
+      tone(t, 0.3, { f0: 330, f1: 110, gain: 0.5, att: 0.001, type: 'triangle' });
+      noise(t, 0.12, { f0: 2400, f1: 500, q: 0.8, gain: 0.9, att: 0.001 });
+      noise(t, 0.6, { type: 'lowpass', f0: 900, f1: 200, q: 0.7, gain: 0.5, att: 0.003, verb: true });
+    } else if (kind === 'slam') {
+      noise(t, 0.05, { f0: 1800, q: 1.2, gain: 1.1, att: 0.0008 });
+      tone(t, 0.25, { f0: 210, f1: 140, gain: 0.7, att: 0.001, type: 'triangle' });
+      for (const f of [523, 787, 1190, 1630]) tone(t, 0.7, { f0: f, f1: f * 0.98, gain: 0.12, att: 0.001, type: 'square', bp: f, bq: 8, verb: true });
+      noise(t + 0.01, 0.4, { type: 'lowpass', f0: 600, f1: 150, gain: 0.6, att: 0.002, verb: true });
+    } else {
+      for (const f of [233, 247, 349, 370, 523]) tone(t, 0.55, { f0: f, f1: f * 0.97, gain: 0.16, att: 0.006, type: 'sawtooth', lp: 3200, verb: true });
+      tone(t, 0.35, { f0: 120, f1: 60, gain: 0.7, att: 0.002 });
+      noise(t, 0.08, { f0: 3000, q: 0.8, gain: 0.5, att: 0.001 });
+    }
+  }
   // ---------- scream-like candidates ----------
   function screamVoice(t, pitch = 1, gain = 0.6, delay = 0) {
     voice(t + delay, { dur: 1.3, f: [[0, 480 * pitch], [0.08, 760 * pitch], [0.35, 830 * pitch], [0.8, 640 * pitch], [1.3, 420 * pitch]], gain, sub: 0, rattle: 0.35, rattleHz: 48, drive: 14,
@@ -324,7 +346,7 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
+    sting, setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
     ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, scream, roarRaw, prepare, useBuffer, stop: () => a && stopLoop(),
   };
 }
