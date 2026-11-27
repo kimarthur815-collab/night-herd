@@ -171,9 +171,9 @@ export function makeMonsterSound(opt = {}) {
   function machine(t) {
     for (const [hz, g, d] of [[410, 0.35, 0.5], [1132, 0.22, 0.35], [2214, 0.16, 0.25], [3660, 0.1, 0.18]]) tone(t, d, { f0: hz, gain: g, att: 0.002 });
     noise(t, 0.05, { type: 'highpass', f0: 2500, q: 0.7, gain: 0.5, att: 0.001 });
-    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(430, t); bz.frequency.exponentialRampToValueAtTime(320, t + 1.1);
+    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(540, t); bz.frequency.exponentialRampToValueAtTime(400, t + 1.1);
     const ring = a.createGain(); ring.gain.value = 0; const rm = a.createOscillator(); rm.frequency.value = 730; rm.connect(ring.gain);
-    const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 3400; bf.Q.value = 1.2;
+    const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 4000; bf.Q.value = 1.2;
     const bg = a.createGain(); env(bg, t, 0.02, 1.25, 0.22); const sh = crush(5);
     bz.connect(ring).connect(sh).connect(bf).connect(bg).connect(out);
     bz.start(t); rm.start(t); bz.stop(t + 1.3); rm.stop(t + 1.3);
@@ -192,12 +192,12 @@ export function makeMonsterSound(opt = {}) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
     // tuned against the reference clip: most of the energy at 1-6 kHz, little below 400 Hz
-    const bright = { breathHz: 3800, chest: 0.1, chestHz: 400, top: 10000, hp: 850, pitch: 1.45, fmul: 1.25 }; // raised again on request: higher than the reference
+    const bright = { breathHz: 4600, chest: 0.08, chestHz: 450, top: 11000, hp: 1050, pitch: 1.8, fmul: 1.42 }; // raised three times on request: well above the reference
     tone(t, 0.16, { f0: 95, f1: 48, gain: 0.35, att: 0.003 }); // a thump of weight behind it
     if (kind === 'growlRoar') voice(t, { ...bright, dur: 1.1, f: [[0, 205], [0.1, 280], [0.45, 215], [1.1, 150]], gain: 0.7, rattle: 0.5, rattleHz: 33, rattleHz1: 24, drive: 9, breath: 0.85, formants: [[1250, 3, 1], [2550, 4, 1], [3750, 5, 0.65]], formantSweep: 0.85, att: 0.02 });
-    if (kind === 'machine') { voice(t + 0.02, { ...bright, dur: 1.05, f: [[0, 245], [0.08, 330], [1.05, 175]], gain: 0.7, rattle: 0.7, rattleHz: 42, drive: 12, breath: 0.7, breathHz: 4200, fifth: 0.25, formants: [[1500, 3, 1], [2900, 4, 1], [4300, 6, 0.6]], hp: 900, att: 0.012 }); machine(t); }
+    if (kind === 'machine') { voice(t + 0.02, { ...bright, dur: 1.05, f: [[0, 245], [0.08, 330], [1.05, 175]], gain: 0.7, rattle: 0.7, rattleHz: 42, drive: 12, breath: 0.7, breathHz: 5000, fifth: 0.25, formants: [[1500, 3, 1], [2900, 4, 1], [4300, 6, 0.6]], hp: 1100, att: 0.012 }); machine(t); }
     if (kind === 'crack') voice(t, { ...bright, dur: 1.1, f: [[0, 210], [0.07, 340], [0.2, 235], [0.42, 310], [0.6, 220], [1.1, 160]], gain: 0.7, rattle: 0.6, rattleHz: 27, rattleHz1: 14, drive: 10, breath: 0.8, jit: 0.16, jitRate: 9, formants: [[1150, 3, 1], [2350, 4, 0.95], [3550, 5, 0.65]], att: 0.015 });
-    if (kind === 'gargle') voice(t, { ...bright, dur: 1.2, f: [[0, 190], [0.18, 262], [1.2, 135]], gain: 0.75, rattle: 0.95, rattleHz: 20, rattleHz1: 36, drive: 9, breath: 1.0, breathHz: 3800, jit: 0.12, jitRate: 7, formants: [[1050, 3, 1], [2250, 4, 1], [3450, 5, 0.7]], formantSweep: 1.1, hp: 800, att: 0.025 });
+    if (kind === 'gargle') voice(t, { ...bright, dur: 1.2, f: [[0, 190], [0.18, 262], [1.2, 135]], gain: 0.75, rattle: 0.95, rattleHz: 20, rattleHz1: 36, drive: 9, breath: 1.0, breathHz: 4600, jit: 0.12, jitRate: 7, formants: [[1050, 3, 1], [2250, 4, 1], [3450, 5, 0.7]], formantSweep: 1.1, hp: 1000, att: 0.025 });
     noise(t, 0.25, { f0: 1800, f1: 600, q: 0.8, gain: 0.3, att: 0.006 }); // the rush of air as it comes
   }
   function cut() {

@@ -13,17 +13,17 @@ const INFO = {
   m3: {
     chip: '③ 가죽이 흘러내린 것', title: '③ 가죽이 흘러내린 것', tag: '단서: 눈만 있고 몸이 안 보이는 것 · 첫날 밤부터 · 셋 중 가장 덜 무서움',
     pts: ['가죽을 벗어 등 뒤로 흘려 내린 몸이 낮게 엎드려 있어요. 빠르게 기어 와요.', '긴 주둥이가 아주 크게 벌어져요 (참고 사진 1).', '헐떡이듯 숨을 빠르게 쉬어요.'],
-    skin: [0.3, 0.26, 0.22], wr: [0, 1, 0.3], anim: { breath: 1.0, breathHz: 1.5, jaw: 0.7, twitch: 1.2, neck: [0, 0], sway: 1 },
+    roar: 'machine', skin: [0.3, 0.26, 0.22], wr: [0, 1, 0.3], anim: { breath: 1.0, breathHz: 1.5, jaw: 0.7, twitch: 1.2, neck: [0, 0], sway: 1 },
   },
   m4: {
     chip: '④ 머리가 갈라진 것', title: '④ 머리가 갈라진 것', tag: '단서: 눈이 셋인 소 · 첫날 밤부터',
     pts: ['얼굴이 가운데로 책처럼 갈라져요. 양쪽 안쪽에 이빨이 줄지어 서서 세로로 긴 입이 돼요.', '목구멍 안에서 세 번째 눈이 봐요.', '뿔과 깊게 주름진 가죽 (참고 사진 3).'],
-    skin: [0.3, 0.27, 0.24], wr: [0.2, 1, 0.6], anim: { breath: 0.6, jaw: 0.45, twitch: 0.9, neck: [0, 0], sway: 0 },
+    roar: 'crack', skin: [0.3, 0.27, 0.24], wr: [0.2, 1, 0.6], anim: { breath: 0.6, jaw: 0.45, twitch: 0.9, neck: [0, 0], sway: 0 },
   },
   m5: {
     chip: '⑤ 그림자', title: '⑤ 그림자', tag: '단서: 랜턴을 꺼도 빛나는 눈 · 후반 · 셋 중 가장 무서움',
     pts: ['3 m가 넘는 검은 형체가 땅에서 일어나요. 머리는 소 해골이고 눈구멍 깊은 곳에 작은 빛이 있어요.', '긴 팔 끝의 뼈 손가락으로 다가와요. 가장자리는 연기처럼 흩어져요.', '현상수배 괴물보다는 한 단계 아래로 두었어요.'],
-    skin: [0.02, 0.02, 0.022], wr: [0, 1, 0], smoke: 1, eyeSelf: 2.2, eyeShine: 0.35, anim: { breath: 0.4, jaw: 0.4, twitch: 0.6, neck: [0, 0], sway: 1 },
+    roar: 'gargle', skin: [0.02, 0.02, 0.022], wr: [0, 1, 0], smoke: 1, eyeSelf: 2.2, eyeShine: 0.35, anim: { breath: 0.4, jaw: 0.4, twitch: 0.6, neck: [0, 0], sway: 1 },
   },
 };
 const ORDER = ['m3', 'm4', 'm5'];
@@ -347,7 +347,7 @@ const rr = (a, b) => a + Math.random() * (b - a);
 const _fz = new THREE.Vector3(), _hy = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const snd = makeMonsterSound();
-let pounceKind = 'growlRoar', scareKind = 'shake';
+let pounceKind = 'machine', scareKind = 'shake';
 const biteKind = 'gulp'; // chosen: ③ 꿀꺽 삼킴
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
 // the pounce, in seconds from the tap: it goes still and quiet, snaps round with a roar and lunges,
@@ -428,7 +428,7 @@ function faceTarget(M, d, max) {
   const split = !!M.meta.split;
   camera.getWorldDirection(_fwd); _rgt.crossVectors(_fwd, camera.up).normalize();
   // the face (not the skull's middle) stops a hand's breadth from you: long muzzles stop further out
-  _tgt.copy(camera.position).addScaledVector(_fwd, d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, 0.03);
+  _tgt.copy(camera.position).addScaledVector(_fwd, d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, -0.1); // eyes a little above the middle, the open mouth below
   const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
   _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
   _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
@@ -443,7 +443,7 @@ function scareStep(M, dt) {
   if (E >= C.appear) once('roar', () => { snd.freeze('none'); snd.pounce(pounceKind); buzz(450); });
   if (E >= cutT) once('cut', () => { snd.snap(); snd.cut(); buzz(220); });
   if (E >= back0) once('back', () => snd.restore());
-  if (E >= back1) { s.scare = -1; s.fired = {}; M.root.position.set(0, 0, 0); M.root.quaternion.identity(); return { jaw: -0.12, fade: 0 }; }
+  if (E >= back1) { s.scare = -1; s.fired = {}; s.thr = null; M.root.position.set(0, 0, 0); M.root.quaternion.identity(); return { jaw: -0.12, fade: 0 }; }
   if (E < C.appear) return { jaw: -0.12, fade: 1 };                   // ① a beat of darkness first
   if (E >= cutT) return { jaw: -0.12, fade: E < back0 ? 1 : 1 - ease((E - back0) / (back1 - back0)) }; // hard cut, then back
   const H0 = _h0.fromArray(M.meta.headPivot), max = split ? 0.6 : 0.95;
@@ -455,11 +455,17 @@ function scareStep(M, dt) {
   const P = _p.copy(_st).lerp(_tgt, u);
   M.root.quaternion.copy(_qs).slerp(_qt, u);
   // thrashing: the head whips about, the whole thing judders
-  const sh = k === 'shake' ? 1 : 0.45, ph = E * 60;
-  if (u >= 1) { P.x += (Math.random() - 0.5) * 0.05 * sh; P.y += (Math.random() - 0.5) * 0.05 * sh; }
+  const sh = k === 'shake' ? 1 : 0.55, ph = E * 60;
+  if (!s.thr) s.thr = { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() };
+  const T = s.thr;
+  if (u >= 1) {
+    T.t -= dt;
+    if (T.t <= 0) { T.t = 0.045 + Math.random() * 0.03; T.goal.set((Math.random() - 0.5) * 0.6 * sh, (Math.random() - 0.5) * 0.6 * sh, (Math.random() - 0.5) * 1.6 * sh); T.pg.set((Math.random() - 0.5) * 0.12 * sh, (Math.random() - 0.5) * 0.1 * sh); } // the roll swings widest: the face stays on screen
+    const kk = Math.min(1, dt * 32); T.cur.lerp(T.goal, kk); T.pc.lerp(T.pg, kk);
+    P.x += T.pc.x; P.y += T.pc.y;
+  } else { T.cur.set(0, 0, 0); T.pc.set(0, 0); }
   M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
-  if (u >= 1) o.uHeadRot.value.set((Math.random() - 0.5) * 0.7 * sh, (Math.random() - 0.5) * 0.4 * sh, (Math.random() - 0.5) * 0.9 * sh);
-  else o.uHeadRot.value.set(0, 0, 0);
+  o.uHeadRot.value.copy(T.cur);
   s.shake = u >= 1 ? 1.4 * sh + 0.3 : 0.6;
   if (E >= shutT) { const k = easeIn((E - shutT) / (cutT - shutT)); o.uHeadRot.value.multiplyScalar(1 - k); return { jaw: max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k, fade: 0 }; } // snap shut
   return { jaw: max * (u >= 1 ? 0.85 + 0.15 * Math.sin(ph * 0.55) : u), fade: 0 };
@@ -558,7 +564,8 @@ async function setMonster(id) {
   for (const b of document.querySelectorAll('#mons button')) b.classList.toggle('on', b.dataset.v === id);
   const info = INFO[id];
   $('tag').textContent = info.tag; $('title').textContent = info.title;
-  $('pts').innerHTML = info.pts.map((p) => `<li>${p}</li>`).join('');
+  $('pts').innerHTML = [...info.pts, `포효: ${POUNCE_KINDS[info.roar]}`].map((p) => `<li>${p}</li>`).join('');
+  pounceKind = info.roar;
   const M = await loadMonster(id);
   if (cur) { scene.remove(cur.root); cur.root.position.set(0, 0, 0); cur.root.quaternion.identity(); }
   $('fade').style.opacity = 0; snd.restore();
@@ -576,9 +583,8 @@ $('pounce').addEventListener('click', () => { snd.unlock(); if (busy()) return; 
 $('scare').addEventListener('click', () => { snd.unlock(); if (busy()) return; cur.st.scare = 0; cur.st.fired = {}; cur.st.scareKind = scareKind; cur.st.scareSide = Math.random() < 0.5 ? 1 : -1; });
 $('gape').addEventListener('click', () => { snd.unlock(); if (!busy()) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); snd.gape(cur.id); } });
 $('sound').addEventListener('click', () => { snd.setEnabled(!snd.enabled); snd.unlock(); $('sound').textContent = snd.enabled ? '소리 켜짐' : '소리 꺼짐'; $('sound').classList.toggle('on', snd.enabled); });
-$('pounceSel').innerHTML = Object.entries(POUNCE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('scareSel').innerHTML = Object.entries(SCARE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-$('pounceSel').addEventListener('change', (e) => { pounceKind = e.target.value; if (!cur || cur.st.eat < 0) snd.preview(pounceKind); }); // pick one, hear it
+$('roar').addEventListener('click', () => { snd.unlock(); if (!busy()) snd.preview(pounceKind); }); // its roar alone
 $('scareSel').addEventListener('change', (e) => { scareKind = e.target.value; });
 window.addEventListener('pointerdown', () => snd.unlock(), { capture: true });
 
@@ -608,5 +614,10 @@ setMonster(new URLSearchParams(location.search).get('m') || 'm3').then(() => req
 window.__mon = {
   setSpeed(s) { speed = s; }, get cur() { return cur; }, setMonster, setLight, setView,
   setPounce(k) { pounceKind = k; }, setScare(k) { scareKind = k; }, snd,
+  where() { // screen positions (-1..1) of the head pivot and the eyes, for framing checks
+    if (!cur) return null; const out = {};
+    const pj = (a) => { const v = new THREE.Vector3().fromArray(a).applyQuaternion(cur.root.quaternion).add(cur.root.position).project(camera); return [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)]; };
+    out.pivot = pj(cur.meta.headPivot); out.eyes = cur.meta.eyes.map(pj); out.cam = camera.position.toArray().map((x) => +x.toFixed(2)); return out;
+  },
   pose(o) { if (!cur) return; Object.assign(cur.st, o.st || {}); if (o.yaw !== undefined) view.yaw = o.yaw; if (o.pitch !== undefined) view.pitch = o.pitch; if (o.zoom !== undefined) view.zoom = o.zoom; },
 };
