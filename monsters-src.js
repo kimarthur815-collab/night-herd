@@ -75,26 +75,25 @@ const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), groundMat);
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
 
-// a rise behind the herd: the ground climbs from a few metres back, so some cows (and eyes) stand higher up
+// a gentle rise starting just behind the front row: the rows behind stand a little higher each
 function hillH(x, z) {
-  const u = Math.min(1, Math.max(0, (-z - 2.6) / 6.5)), s = u * u * (3 - 2 * u);
-  return s * (1.7 + 0.55 * Math.sin(x * 0.23 + 1.0) + 0.35 * Math.sin(x * 0.61 + 2.0)) - 0.03;
+  const u = Math.min(1, Math.max(0, (-z - 1.3) / 7)), s = u * u * (3 - 2 * u);
+  return s * (1.05 + 0.25 * Math.sin(x * 0.23 + 1.0) + 0.15 * Math.sin(x * 0.61 + 2.0)) - 0.03;
 }
 {
-  const g = new THREE.PlaneGeometry(60, 22, 120, 44); g.rotateX(-Math.PI / 2); g.translate(0, 0, -13.6);
+  const g = new THREE.PlaneGeometry(60, 24, 120, 48); g.rotateX(-Math.PI / 2); g.translate(0, 0, -13.3);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) p.setY(i, hillH(p.getX(i), p.getZ(i)));
   g.computeVertexNormals();
   const hill = new THREE.Mesh(g, groundMat); hill.receiveShadow = true; scene.add(hill);
 }
-
 // the herd behind: pairs of eyes catching the light, now and then blinking
 const eyeTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)'); g.addColorStop(0.5, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const herd = [];
 {
   let s = 7;
   const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-  for (let i = 0; i < 16; i++) {
+  for (let i = 0; i < 0; i++) { // (none: the herd is the front row and three rows behind it)
     const d = 7 + r() * 16, a = (r() - 0.5) * 1.5, x = Math.sin(a) * d, z = -Math.cos(a) * d + 2.5, y = hillH(x, z) + 1.2 + r() * 0.3, look = (r() - 0.5) * 0.5;
     const pair = new THREE.Group(); pair.position.set(x, y, z); pair.rotation.y = look;
     for (const side of [-1, 1]) {
@@ -294,7 +293,7 @@ let cowGeos = null, cowFar = null;
 const loadSet = async (dir) => { const meta = await (await fetch(`${dir}/cows.json`)).json(); return Promise.all(meta.map(async (m) => parseCow(await (await fetch(m.file)).json(), m))); };
 const loadCows = (async () => { [cowGeos, cowFar] = await Promise.all([loadSet('cows'), loadSet('cows-far')]); })();
 // cows crowded loosely as a herd stands, not in a drawn line: a ragged front row with a gap where the monster is,
-// a few just behind it, and some up on the rise further back, dark shapes with their eyes catching the light
+// three thinning rows behind it up the gentle rise, dark shapes with their eyes catching the light
 function layoutRow(M) {
   row.clear();
   if (!cowGeos) return;
@@ -302,23 +301,29 @@ function layoutRow(M) {
   let seed = 23; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const add = (geos, x, z, yaw, near, coat) => {
     const mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], cowMaterial(coat, Math.min(1, coat + 0.06 + r() * 0.1), r() * 6));
-    mesh.position.set(x, z < -2.6 ? hillH(x, z) : 0, z); mesh.rotation.y = yaw; mesh.scale.setScalar(0.92 + r() * 0.14);
+    mesh.position.set(x, z < -1.3 ? hillH(x, z) : 0, z); mesh.rotation.y = yaw; mesh.scale.setScalar(0.92 + r() * 0.14);
     mesh.castShadow = near; mesh.receiveShadow = true;
     mesh.userData.nod = { t: r() * 5, goal: 0, v: 0, turn: (r() - 0.5) * 0.3 };
     row.add(mesh);
   };
   const coat = () => 0.14 + r() * 0.2;
-  for (const side of [-1, 1]) { // the front: bunched and uneven, some forward, some back, some turned
+  for (const side of [-1, 1]) { // the front row: uneven gaps, some forward, some back, some turned
     let x = half + 0.2 + r() * 0.35;
     for (let k = 0; k < 4; k++) {
-      const back = r() < 0.35;                                 // now and then one stands a rank behind
-      add(back ? cowFar : cowGeos, side * x, back ? -1.6 - r() * 0.8 : -1.1 + r() * 2.0, (r() - 0.5) * 1.2 + (r() < 0.3 ? side * 0.9 : 0), !back, coat());
-      x += (back ? 0.35 : 0.65) + r() * 0.85;
+      add(cowGeos, side * x, -0.8 + r() * 1.4, (r() - 0.5) * 1.1 + (r() < 0.3 ? side * 0.8 : 0), true, coat());
+      x += 0.75 + r() * 0.7;
     }
   }
-  for (let k = 0; k < 3; k++) add(cowFar, (r() - 0.5) * 3.4, -1.9 - r() * 0.9, (r() - 0.5) * 1.0, false, coat()); // just behind it
-  for (let k = 0; k < 6; k++) add(cowFar, (r() - 0.5) * 11, -5.2 - r() * 3.6, (r() - 0.5) * 1.2, false, coat() * 0.8); // up on the rise
+  // three rows behind on the rise, fewer cows the further back
+  for (const [z0, n] of [[-2.7, 5], [-4.1, 3], [-5.5, 2]]) {
+    const w = n * 1.35;
+    for (let k = 0; k < n; k++) {
+      const x = -w / 2 + (k + 0.5) * (w / n) + (r() - 0.5) * 0.7;
+      add(cowFar, x, z0 + (r() - 0.5) * 0.6, (r() - 0.5) * 1.0, false, coat() * (z0 < -4 ? 0.8 : 1));
+    }
+  }
 }
+
 function animateRow(dt) {
   for (const c of row.children) {
     const n = c.userData.nod, own = c.material.userData.own;

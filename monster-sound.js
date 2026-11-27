@@ -3,6 +3,8 @@
 // Breathing and growls run while a monster is on screen; the pounce, the bite and the dark are one-shots.
 export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 날카로운 포효', machine: '② 기계음 섞인 포효', crack: '③ 갈라지는 포효', gargle: '④ 끓는 목 고음 포효' };
 export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' }; // ③ chosen
+// scream-like candidates (rendered to files for the ear first)
+export const SCREAM_KINDS = { higher: '① 지금 포효를 더 높게', metal: '② 쇠 긁는 기계 비명', tear: '③ 찢어지는 고음 비명', overGrowl: '④ 고음 비명 + 낮은 으르렁', chorus: '⑤ 여러 목소리 겹친 비명', swell: '⑥ 빨려 들듯 차오르는 비명' };
 export const SCARE_KINDS = { shake: '① 얼굴이 확 튀어나와 마구 흔들림', fast: '② 멀리서 순식간에', side: '③ 화면 옆에서 갑자기' };
 
 export function makeMonsterSound(opt = {}) {
@@ -211,6 +213,38 @@ export function makeMonsterSound(opt = {}) {
     tone(t + 0.35, 0.13, { f0: 62, f1: 42, gain: 0.45, att: 0.005 }); tone(t + 0.52, 0.15, { f0: 56, f1: 38, gain: 0.32, att: 0.005 });
   }
   function snap() { if (ready()) crunch(a.currentTime + 0.005, 0.75); } // the jaws meeting on you
+  // ---------- scream-like candidates ----------
+  function screamVoice(t, pitch = 1, gain = 0.6, delay = 0) {
+    voice(t + delay, { dur: 1.3, f: [[0, 480 * pitch], [0.08, 760 * pitch], [0.35, 830 * pitch], [0.8, 640 * pitch], [1.3, 420 * pitch]], gain, sub: 0, rattle: 0.35, rattleHz: 48, drive: 14,
+      breath: 0.7, breathHz: 5200, jit: 0.07, jitRate: 9, formants: [[1750, 4, 1], [3150, 5, 0.9], [4700, 6, 0.6]], hp: 950, top: 12500, chest: 0.04, att: 0.012 });
+  }
+  function scream(kind) {
+    if (!ready()) return;
+    const t = a.currentTime + 0.005;
+    if (kind === 'higher') { // the chosen machine roar, half an octave up again
+      voice(t + 0.02, { breathHz: 5600, chest: 0.06, chestHz: 500, top: 12500, hp: 1300, pitch: 2.4, fmul: 1.7, loud: 1.7, dur: 1.05, f: [[0, 245], [0.08, 330], [1.05, 175]], gain: 0.7, rattle: 0.7, rattleHz: 46, drive: 12, breath: 0.7, fifth: 0.25, formants: [[1500, 3, 1], [2900, 4, 1], [4300, 6, 0.6]], att: 0.012 });
+      machine(t);
+    }
+    if (kind === 'metal') { // an animatronic screech: high saws ring-modulated, scraped through a metal comb
+      const dur = 1.2, sh = crush(9), bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 3000; bf.Q.value = 0.9;
+      const g = a.createGain(); env(g, t, 0.01, dur, 2.2);
+      const ring = a.createGain(); ring.gain.value = 0; const rm = a.createOscillator(); rm.frequency.setValueAtTime(2300, t); rm.frequency.linearRampToValueAtTime(1700, t + dur); rm.connect(ring.gain);
+      for (const [mul, gg] of [[1, 0.5], [1.008, 0.4], [1.5, 0.25]]) { const o = a.createOscillator(); o.type = 'sawtooth'; o.frequency.setValueAtTime(880 * mul, t); o.frequency.exponentialRampToValueAtTime(1400 * mul, t + 0.12); o.frequency.exponentialRampToValueAtTime(700 * mul, t + dur); const og = a.createGain(); og.gain.value = gg; o.connect(og).connect(ring); o.start(t); o.stop(t + dur + 0.05); }
+      const dl = a.createDelay(0.01); dl.delayTime.value = 0.0023; const fb = a.createGain(); fb.gain.value = 0.7; dl.connect(fb).connect(dl);
+      ring.connect(sh).connect(bf).connect(g); bf.connect(dl); const dg = a.createGain(); dg.gain.value = 0.35; dl.connect(dg).connect(g);
+      g.connect(out); g.connect(verbIn); rm.start(t); rm.stop(t + dur + 0.05);
+      noise(t, 0.9, { f0: 6000, f1: 3500, q: 1.5, gain: 0.25, att: 0.01 });
+      machine(t);
+    }
+    if (kind === 'tear') screamVoice(t, 1, 0.75);
+    if (kind === 'overGrowl') { screamVoice(t + 0.04, 1, 0.6); voice(t, { dur: 1.4, f: [[0, 90], [0.2, 120], [1.4, 60]], gain: 0.55, rattle: 0.95, rattleHz: 19, rattleHz1: 30, drive: 7, breath: 0.6, breathHz: 900, formants: [[420, 3, 1], [800, 4, 0.7]], chest: 1, chestHz: 260, top: 3000, att: 0.03 }); }
+    if (kind === 'chorus') { screamVoice(t, 1, 0.4); screamVoice(t, 0.93, 0.35, 0.03); screamVoice(t, 1.08, 0.35, 0.06); screamVoice(t, 0.86, 0.25, 0.09); }
+    if (kind === 'swell') { // rises out of nothing toward you, then breaks into the scream
+      voice(t, { dur: 0.75, f: [[0, 160], [0.75, 620]], gain: 0.5, sub: 0, rattle: 0.6, rattleHz: 20, rattleHz1: 50, drive: 8, breath: 1, breathHz: 3000, formants: [[1200, 3, 1], [2600, 4, 0.8]], hp: 500, top: 9000, att: 0.7 });
+      noise(t, 0.75, { f0: 800, f1: 6000, q: 0.8, gain: 0.3, att: 0.72 });
+      screamVoice(t, 1.05, 0.8, 0.72);
+    }
+  }
   function preview(kind) { if (ready()) { freeze(kind); setTimeout(() => { pounce(kind); setTimeout(restore, 1800); }, kind === 'growlRoar' ? 520 : 60); } }
   function previewBite(kind) { if (ready()) { bite(kind); setTimeout(restore, 2600); } }
   // ---------- the bite, then the dark ----------
@@ -256,6 +290,6 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, stop: () => a && stopLoop(),
+    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, scream, stop: () => a && stopLoop(),
   };
 }
