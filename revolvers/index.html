@@ -25,6 +25,7 @@
   #hint { position: absolute; left: 10px; top: 4px; color: var(--dim); font-size: 12px; pointer-events: none; text-shadow: 0 1px 2px #000; }
   footer { background: var(--panel); border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
   h1 { font: 700 17px/1.25 Georgia, "Noto Serif KR", serif; margin: 0 0 2px; }
+  .tag { color: var(--amber); font-size: 12.5px; font-weight: 700; margin: 0 0 3px; }
   .sub { color: var(--dim); font-size: 12.5px; margin: 0 0 6px; }
   ul { margin: 0 0 8px; padding-left: 18px; font-size: 13.5px; } li { margin: 1px 0; }
   .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
@@ -47,6 +48,7 @@
     <div id="hint">끌어서 돌리기 · 두 손가락으로 확대</div>
   </div>
   <footer>
+    <p class="tag" id="tag"></p>
     <h1 id="title"></h1>
     <p class="sub" id="sub"></p>
     <ul id="pts"></ul>

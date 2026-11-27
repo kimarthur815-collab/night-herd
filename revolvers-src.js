@@ -4,21 +4,21 @@ import * as THREE from 'three';
 
 const GUNS = {
   colt75: {
-    chip: '① 콜트 기병용', title: '① 콜트 피스메이커 7½″ · 기병용',
+    tag: '게임에 쓸 총', chip: '① 콜트 기병용', title: '① 콜트 피스메이커 7½″ · 기병용',
     sub: '1873년 미군 제식 · .45 콜트 6연발 · 청색 총열과 실린더, 무지갯빛 표면경화 프레임 · 호두나무 통손잡이',
     pts: ['가장 유명한 서부 리볼버예요. 총열이 길어 1인칭에서 겨누는 맛이 좋아요.', '장전은 옆의 작은 덮개를 열고 한 발씩 (느리고 긴장돼요).', '총열이 길어서 화면을 조금 더 가려요.'],
     mats: { frame: 'case', barrel: 'blued', straps: 'blued', grip: 'walnut', screws: 'fireblue', cylinder: 'blued', hammer: 'case', trigger: 'case' },
     wear: 0.75, turn: 1, hamMax: 0.82,
   },
   colt475: {
-    chip: '② 콜트 니켈', title: '② 콜트 피스메이커 4¾″ · 민수용 니켈',
+    tag: '나중에 업그레이드: 공이치기와 겨누기가 빨라지고 화면을 덜 가려요. 대신 탄이 조금 더 퍼져요.', chip: '② 콜트 니켈', title: '② 콜트 피스메이커 4¾″ · 민수용 니켈',
     sub: '1879년 무렵부터 · .45 콜트 6연발 · 니켈 도금 · 상아 손잡이',
     pts: ['짧아서 화면을 덜 가리고, 랜턴 불빛에 은색으로 번쩍여요.', '장전은 ①과 같아요 (한 발씩).', '밝게 빛나서 어두운 분위기와는 덜 어울릴 수 있어요.'],
     mats: { frame: 'nickel', barrel: 'nickel', straps: 'nickel', grip: 'ivory', screws: 'nickel', cylinder: 'nickel', hammer: 'nickel', trigger: 'nickel' },
     wear: 0.45, turn: 1, hamMax: 0.82,
   },
   schofield: {
-    chip: '③ S&W 스코필드', title: '③ 스미스 & 웨슨 스코필드 7″',
+    tag: '후보', chip: '③ S&W 스코필드', title: '③ 스미스 & 웨슨 스코필드 7″',
     sub: '1875년 미군 채택 · .45 스코필드 6연발 · 청색, 표면경화 공이 · 호두나무 손잡이 · 끈 고리',
     pts: ['총을 아래로 꺾어 열면 탄피 6개가 한꺼번에 튀어나와요 (장전이 빨라요).', '뒤쪽 위의 걸쇠와 손잡이 밑 고리가 독특해요. 실린더는 콜트와 반대로 돌아요.', '콜트보다 덜 알려진 모양이에요.'],
     mats: { frame: 'blued', barrel: 'blued', grip: 'walnut', screws: 'blued', ring: 'steel', cylinder: 'blued', hammer: 'case', trigger: 'case' },
@@ -420,7 +420,7 @@ function updateAmmo() {
 async function setGun(id) {
   for (const b of document.querySelectorAll('#guns button')) b.classList.toggle('on', b.dataset.v === id);
   const c = GUNS[id];
-  $('title').textContent = c.title; $('sub').textContent = c.sub;
+  $('title').textContent = c.title; $('sub').textContent = c.sub; $('tag').textContent = c.tag;
   $('pts').innerHTML = c.pts.map((t) => `<li>${t}</li>`).join('');
   $('loading').hidden = !!guns[id] ? true : false;
   const g = await loadGun(id);
