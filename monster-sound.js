@@ -13,7 +13,11 @@ export function makeMonsterSound(opt = {}) {
     out = a.createGain(); out.gain.value = 0.9;
     muffle = a.createBiquadFilter(); muffle.type = 'lowpass'; muffle.frequency.value = 18000; muffle.Q.value = 0.7;
     const comp = a.createDynamicsCompressor(); comp.threshold.value = -12; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.2;
-    out.connect(muffle).connect(comp).connect(a.destination);
+    // a soft ceiling after the compressor: bone clicks are too quick for it, and must not clip
+    const lim = a.createWaveShaper(), n = 2048, cv = new Float32Array(n);
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1, ax = Math.abs(x); cv[i] = Math.sign(x) * (ax < 0.7 ? ax : 0.7 + 0.28 * Math.tanh((ax - 0.7) / 0.28)); }
+    lim.curve = cv; const pad = a.createGain(); pad.gain.value = 0.92;
+    out.connect(muffle).connect(comp).connect(pad).connect(lim).connect(a.destination);
     bus = a.createGain(); bus.connect(out);                         // ambience: ducked during the pounce
     verbIn = a.createConvolver(); verbIn.buffer = impulse(a, 1.8, 2.6);
     const vg = a.createGain(); vg.gain.value = 0.3; verbIn.connect(vg).connect(out);
@@ -156,13 +160,13 @@ export function makeMonsterSound(opt = {}) {
   }
   // a low growl rising under the quiet before it comes (the "그르렁")
   function growl(t, dur, gain) {
-    voice(t, { dur, f: [[0, 58], [dur, 66]], gain, rattle: 0.85, rattleHz: 19, rattleHz1: 26, drive: 3, breath: 0.35, breathHz: 600, formants: [[380, 5, 0.8], [700, 6, 0.4]], chest: 1.1, top: 1800, att: dur * 0.8, jit: 0.04 });
+    voice(t, { dur, f: [[0, 96], [dur, 112]], gain, rattle: 0.85, rattleHz: 22, rattleHz1: 30, drive: 3, breath: 0.35, breathHz: 900, formants: [[540, 5, 0.8], [980, 6, 0.45]], chest: 0.8, chestHz: 320, top: 2800, att: dur * 0.8, jit: 0.04 });
   }
   // animatronic: a metal clank as the jaw slams open, a buzzing electric edge, a rattle like loose parts
   function machine(t) {
     for (const [hz, g, d] of [[410, 0.35, 0.5], [1132, 0.22, 0.35], [2214, 0.16, 0.25], [3660, 0.1, 0.18]]) tone(t, d, { f0: hz, gain: g, att: 0.002 });
     noise(t, 0.05, { type: 'highpass', f0: 2500, q: 0.7, gain: 0.5, att: 0.001 });
-    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(110, t); bz.frequency.exponentialRampToValueAtTime(78, t + 1.2);
+    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(180, t); bz.frequency.exponentialRampToValueAtTime(130, t + 1.2);
     const ring = a.createGain(); ring.gain.value = 0; const rm = a.createOscillator(); rm.frequency.value = 730; rm.connect(ring.gain);
     const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 1700; bf.Q.value = 1.2;
     const bg = a.createGain(); env(bg, t, 0.02, 1.25, 0.22); const sh = crush(5);
@@ -182,30 +186,45 @@ export function makeMonsterSound(opt = {}) {
   function pounce(kind) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
-    if (kind === 'growlRoar') voice(t, { dur: 1.25, f: [[0, 120], [0.12, 165], [0.5, 120], [1.25, 72]], gain: 0.55, rattle: 0.55, rattleHz: 31, rattleHz1: 22, drive: 7, breath: 0.6, formants: [[560, 4, 1], [980, 5, 0.85], [2400, 6, 0.3]], formantSweep: 0.75, att: 0.025 });
-    if (kind === 'machine') { voice(t + 0.02, { dur: 1.2, f: [[0, 140], [0.1, 190], [1.2, 95]], gain: 0.42, rattle: 0.7, rattleHz: 38, drive: 10, breath: 0.4, fifth: 0.18, formants: [[640, 4, 1], [1250, 5, 0.9], [2700, 7, 0.5]], top: 6500, att: 0.015 }); machine(t); }
-    if (kind === 'deep') voice(t, { dur: 1.6, f: [[0, 70], [0.15, 95], [0.7, 72], [1.6, 46]], gain: 0.22, rattle: 0.4, rattleHz: 24, rattleHz1: 15, drive: 5, breath: 0.45, breathHz: 700, sub: 0.8, subType: 'triangle', formants: [[380, 4, 1], [720, 5, 0.7], [1900, 6, 0.18]], chest: 1.4, chestHz: 200, top: 3200, att: 0.04, swell: 1.15 });
-    if (kind === 'gargle') voice(t, { dur: 1.4, f: [[0, 105], [0.2, 140], [1.4, 68]], gain: 0.55, rattle: 0.95, rattleHz: 17, rattleHz1: 33, drive: 8, breath: 0.9, breathHz: 900, jit: 0.12, jitRate: 7, formants: [[470, 3, 1], [880, 4, 0.8], [2100, 5, 0.4]], formantSweep: 1.2, att: 0.03 });
+    if (kind === 'growlRoar') voice(t, { dur: 1.25, f: [[0, 205], [0.12, 290], [0.5, 210], [1.25, 128]], gain: 0.55, rattle: 0.55, rattleHz: 34, rattleHz1: 25, drive: 7, breath: 0.6, breathHz: 1500, formants: [[760, 4, 1], [1350, 5, 0.85], [3000, 6, 0.35]], formantSweep: 0.8, chestHz: 380, chest: 0.6, top: 7000, att: 0.025 });
+    if (kind === 'machine') { voice(t + 0.02, { dur: 1.2, f: [[0, 245], [0.1, 330], [1.2, 165]], gain: 0.55, rattle: 0.7, rattleHz: 40, drive: 10, breath: 0.4, breathHz: 1700, fifth: 0.18, formants: [[860, 4, 1], [1650, 5, 0.9], [3300, 7, 0.5]], chestHz: 420, chest: 0.5, top: 8000, att: 0.015 }); machine(t); }
+    if (kind === 'deep') voice(t, { dur: 1.6, f: [[0, 125], [0.15, 168], [0.7, 130], [1.6, 84]], gain: 0.3, rattle: 0.4, rattleHz: 26, rattleHz1: 17, drive: 5, breath: 0.45, breathHz: 1000, sub: 0.7, subType: 'triangle', formants: [[540, 4, 1], [980, 5, 0.75], [2400, 6, 0.25]], chest: 1.1, chestHz: 280, top: 4800, att: 0.04, swell: 1.15 });
+    if (kind === 'gargle') voice(t, { dur: 1.4, f: [[0, 180], [0.2, 245], [1.4, 118]], gain: 0.55, rattle: 0.95, rattleHz: 19, rattleHz1: 35, drive: 8, breath: 0.9, breathHz: 1400, jit: 0.12, jitRate: 7, formants: [[650, 3, 1], [1200, 4, 0.8], [2700, 5, 0.45]], formantSweep: 1.2, chestHz: 340, chest: 0.6, top: 7000, att: 0.03 });
     noise(t, 0.35, { type: 'lowpass', f0: 220, f1: 60, q: 0.8, gain: 0.45, att: 0.008 }); // the rush of air as it comes
   }
   function preview(kind) { if (ready()) { freeze(kind); setTimeout(() => { pounce(kind); setTimeout(restore, 1800); }, kind === 'growlRoar' ? 520 : 60); } }
   function previewBite(kind) { if (ready()) { bite(kind); setTimeout(restore, 2600); } }
   // ---------- the bite, then the dark ----------
+  // one crack: a hard click and the short ring of bone around it
+  function crack(t, g, f) {
+    noise(t, 0.003, { type: 'highpass', f0: 1200, q: 0.7, gain: g, att: 0.0004 });
+    noise(t, 0.03 + Math.random() * 0.03, { f0: f, f1: f * 0.8, q: 10, gain: g * 2.2, att: 0.0005 });
+    noise(t, 0.012, { f0: f * 0.45, q: 3, gain: g * 0.9, att: 0.0005 });
+  }
+  // 우-드-득: three breaks, each a cluster of cracks, closer together and harder each time,
+  // over a bed of splintering, wet flesh giving, and the thud of the jaw
   function crunch(t, big = 1) {
-    tone(t, 0.2, { f0: 150, f1: 38, gain: 0.9 * big, att: 0.003 });
-    noise(t, 0.06, { type: 'highpass', f0: 1800, q: 0.7, gain: 0.55 * big, att: 0.001 });
-    clicks(t, 8, 0.14, { f: 4200, q: 3, gain: 0.45 * big, len: 0.004 });
+    noise(t, 0.008, { f0: 4300, q: 3, gain: 0.7 * big, att: 0.0005 });                       // teeth meeting
+    tone(t, 0.16, { f0: 120, f1: 48, gain: 0.8 * big, att: 0.002 });                          // the jaw's thud
+    const breaks = [[0.02, 3, 0.05, 0.45], [0.13, 5, 0.06, 0.7], [0.25, 8, 0.075, 1.0]];
+    for (const [dt, n, span, g] of breaks) {
+      for (let i = 0; i < n; i++) { const u = (i / n) ** 1.5; crack(t + dt + u * span + Math.random() * 0.006, g * big * (0.5 + 0.5 * Math.random()) * 1.15, 900 + Math.random() * 3200); }
+      tone(t + dt, 0.07, { f0: 95, f1: 55, gain: 0.35 * g * big, att: 0.002 });             // each break thumps in the skull
+    }
+    for (let i = 0; i < 45; i++) noise(t + 0.02 + Math.random() * 0.4, 0.0015, { type: 'highpass', f0: 2600, q: 0.7, gain: (0.14 + 0.2 * Math.random()) * big, att: 0.0003 }); // splinters
+    for (let i = 0; i < 6; i++) noise(t + 0.03 + i * 0.06 + Math.random() * 0.03, 0.09, { f0: 380 + Math.random() * 500, f1: 240, q: 2.5, gain: 0.26 * big, att: 0.01 }); // wet give
   }
   function bite(kind) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
     crunch(t);
-    // the world goes muffled and far away, as if heard from inside
-    muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(18000, t + 0.06); muffle.frequency.exponentialRampToValueAtTime(340, t + 0.4);
-    if (kind === 'chew') for (let i = 1; i <= 3; i++) { const u = t + 0.45 * i; noise(u, 0.22, { type: 'lowpass', f0: 800, f1: 400, q: 1, gain: 0.3, att: 0.01 }); clicks(u, 4, 0.1, { f: 3000, gain: 0.3, len: 0.004 }); noise(u + 0.1, 0.25, { f0: 650, f1: 220, q: 2, gain: 0.18, att: 0.02 }); }
-    if (kind === 'gulp') { tone(t + 0.55, 0.38, { f0: 270, f1: 70, gain: 0.45, att: 0.02 }); noise(t + 0.55, 0.5, { type: 'lowpass', f0: 380, f1: 150, q: 2, gain: 0.22, att: 0.03 }); tone(t + 0.95, 0.6, { type: 'sawtooth', f0: 60, f1: 45, gain: 0.12, lp: 250, am: 15 }); }
+    // the crunch is heard clear; then the world goes muffled and far away, as if heard from inside
+    muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(18000, t + 0.42);
+    muffle.frequency.exponentialRampToValueAtTime(1400, t + 0.9); muffle.frequency.exponentialRampToValueAtTime(320, t + 2.4);
+    if (kind === 'chew') for (let i = 1; i <= 3; i++) { const u = t + 0.5 * i; crunch(u, 0.65 - i * 0.08); noise(u + 0.12, 0.28, { f0: 600, f1: 220, q: 2, gain: 0.2, att: 0.02 }); }
+    if (kind === 'gulp') { tone(t + 0.6, 0.38, { f0: 300, f1: 75, gain: 0.45, att: 0.02 }); noise(t + 0.6, 0.5, { type: 'lowpass', f0: 420, f1: 160, q: 2, gain: 0.25, att: 0.03 }); tone(t + 1.0, 0.6, { type: 'sawtooth', f0: 66, f1: 48, gain: 0.12, lp: 260, am: 15 }); }
     // the heart slows in the dark and stops
-    [0.9, 1.9, 3.2].forEach((dt, i) => { const g = 0.5 - i * 0.14; tone(t + dt, 0.13, { f0: 62, f1: 42, gain: g, att: 0.005 }); tone(t + dt + 0.17, 0.15, { f0: 56, f1: 38, gain: g * 0.7, att: 0.005 }); });
+    [1.0, 2.0, 3.2].forEach((dt, i) => { const g = 0.5 - i * 0.14; tone(t + dt, 0.13, { f0: 62, f1: 42, gain: g, att: 0.005 }); tone(t + dt + 0.17, 0.15, { f0: 56, f1: 38, gain: g * 0.7, att: 0.005 }); });
   }
   function restore() { // light comes back; sound with it
     if (!a) return;
