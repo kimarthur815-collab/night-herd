@@ -504,11 +504,11 @@ const KuwaharaShader = {
 const FinalShader = {
   uniforms: {
     tDiffuse: { value: null }, uRes: { value: new THREE.Vector2(960, 540) }, uCount: { value: 0 }, uExp: { value: 0.26 }, uDesat: { value: 0 },
-    uSeed: { value: 1 }, uFade: { value: 0 }, uHurt: { value: 0 },
+    uSeed: { value: 1 }, uFade: { value: 0 }, uHurt: { value: 0 }, uBars: { value: 0 }, tMask: { value: null }, uMaskOn: { value: 0 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uCount, uExp, uDesat, uSeed, uFade, uHurt; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uCount, uExp, uDesat, uSeed, uFade, uHurt, uBars, uMaskOn; uniform sampler2D tMask; varying vec2 vUv;
     vec3 aces(vec3 x){ const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14; return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.0,1.0); }
     float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     // the counting look: the picture drops to a low, smeared resolution
@@ -537,6 +537,8 @@ const FinalShader = {
       float n = hash12(px + uSeed) + hash12(px*1.37 + uSeed*3.1) - 1.0;
       float lum = dot(c, vec3(0.3333));
       c += n * max(mix(0.014, 0.06, k), mix(0.014, 0.05, uDesat)) * (0.45 + 0.9*(1.0 - lum));
+      // the letterbox: black bars above and below; when it leaps at you, it comes out over them
+      if (vUv.y < uBars || vUv.y > 1.0 - uBars) c *= uMaskOn > 0.5 ? step(texture2D(tMask, vUv).r, 0.9999) : 0.0;
       c *= 1.0 - uFade;
       gl_FragColor = vec4(max(c, 0.0), 1.0);
     }`,
@@ -1540,7 +1542,7 @@ let paused = false;
 const tapO = new THREE.Vector3(), tapD = new THREE.Vector3(), tapC = new THREE.Vector3();
 const lastStation = () => NL.stations.length - 1;
 const stationDone = (i) => cows.every((c) => c.station !== i || c.counted);
-const hintCount = () => say(TOUCH ? NL.lines.count : NL.lines.countPC, 3.2);
+const hintCount = () => { if (!fight.on && !night.scaring) say(TOUCH ? NL.lines.count : NL.lines.countPC, 3.2); };
 const hintNext = () => say(TOUCH ? NL.lines.next : NL.lines.nextPC, 3.2);
 // the herd in front of each place: a ragged front row, then thinning rows up the rise, all (mostly) facing you
 function makeNightHerd(geos) {
@@ -1683,6 +1685,20 @@ function scareFrame(dt) {
     scareLight.position.copy(camera.position).addScaledVector(fwd, 0.15).addScaledVector(camera.up, -0.2);
   }
 }
+// where the leaping thing is on screen (its depth, drawn alone at half size), so it can break out over the letterbox
+const maskRT = new THREE.WebGLRenderTarget(2, 2, { depthBuffer: true }); maskRT.depthTexture = new THREE.DepthTexture(2, 2);
+if (NIGHT_SCENE) finalPass.uniforms.uBars.value = NL.letterbox;
+function monsterMask() {
+  const M = monster?.mon.M, on = !!M && M.root.visible && (night.scaring || (fight.on && fight.phase === 'eat'));
+  finalPass.uniforms.uMaskOn.value = on ? 1 : 0;
+  if (!on) return;
+  const w = Math.max(2, finalPass.uniforms.uRes.value.x >> 1), h = Math.max(2, finalPass.uniforms.uRes.value.y >> 1);
+  if (maskRT.width !== w || maskRT.height !== h) maskRT.setSize(w, h);
+  M.mesh.layers.enable(1); const keep = camera.layers.mask; camera.layers.set(1);
+  renderer.setRenderTarget(maskRT); renderer.clear(true, true, false); renderer.render(scene, camera);
+  renderer.setRenderTarget(null); camera.layers.mask = keep;
+  finalPass.uniforms.tMask.value = maskRT.depthTexture;
+}
 const scareLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), 0, 3, 2);
 if (NIGHT_SCENE) scene.add(scareLight);
 function hurt() { hp = Math.max(0, hp - 1); if (hp <= 0 && !night.scaring) night.endT = 0; }
@@ -1736,7 +1752,8 @@ function beginFight(c) {
 }
 // standing where it is, turned to you; walking, its body lurches with each step
 function placeFight(bob = 0, roll = 0, lean = 0) {
-  const M = fight.M, yaw = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
+  const M = fight.M, at = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
+  const yaw = fight.phase === 'walk' && fight.heading !== undefined ? fight.heading : at; // running: along its path
   M.root.quaternion.setFromEuler(_fe.set(lean, yaw, roll, 'YXZ')); M.root.position.copy(fight.pos); M.root.position.y += bob;
 }
 function fightHit() {
@@ -1781,30 +1798,34 @@ function fightStep(dt, time) {
     M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
     if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar); buzz(250); }
-  } else if (fight.phase === 'walk') { // it comes, fast and lurching, straight at you (the shadow only while the light is weak)
-    const G = F.gait, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1;
-    _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(), left = dist - F.reach; _fd.normalize();
+  } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
+    const G = F.gait, L = F.leap, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
+    _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(); _fd.normalize();
+    if (dist <= (leaper ? L.from : L.tallFrom)) { // close enough: it springs (no stopping first)
+      fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0;
+      startEat(M, { leap: leaper ? L : null, run: true, d: F.face }); return;
+    }
     fight.stumbleIn = (fight.stumbleIn ?? rand(...G.stumble)) - dt;
     if (fight.stumbleIn < 0) { fight.stumbleIn = rand(...G.stumble); fight.stumbleT = G.stumbleTime; fight.whip = (Math.random() < 0.5 ? -1 : 1) * G.whip; }
     const stumbling = (fight.stumbleT = Math.max(0, (fight.stumbleT ?? 0) - dt)) > 0;
-    const rush = lerp(G.rush, 1, clamp((dist - F.reach) / 3.5, 0, 1)); // faster the closer it gets
-    const surge = 1 - G.surge + 2 * G.surge * Math.max(0, Math.sin(fight.step)) ** 2; // a lunge on every step
-    const v = still ? 0 : F.walk * crawl * rush * surge * (stumbling ? 0.15 : 1);
-    // it weaves from side to side as it comes, never quite straight
-    _fh.set(_fd.z, 0, -_fd.x).multiplyScalar(Math.cos(fight.step * 0.5) * G.weave * (still ? 0 : 1) * dt * 2.2);
-    fight.pos.addScaledVector(_fd, Math.min(left, v * dt)).add(_fh); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
+    fight.speed = still ? 0 : approach(fight.speed ?? 0, F.walk * crawl * lerp(G.rush, 1, clamp((dist - 1) / 4, 0, 1)), F.walk * crawl / F.accel * dt);
+    const v = fight.speed * (1 - G.surge + 2 * G.surge * Math.sin(fight.step) ** 2) * (stumbling ? 0.35 : 1);
+    // its path bends from side to side and it turns along it (no sliding sideways)
+    fight.heading = Math.atan2(_fd.x, _fd.z) + Math.sin(fight.step * 0.35) * G.weave * clamp((dist - 1.5) / 3, 0, 1);
+    fight.pos.x += Math.sin(fight.heading) * v * dt; fight.pos.z += Math.cos(fight.heading) * v * dt; fight.pos.y = groundH(fight.pos.x, fight.pos.z);
     const moving = v > 0.05 ? 1 : 0, stepBefore = fight.step;
-    fight.step += (still ? 0 : Math.max(v, F.walk * 0.6)) * dt / F.stride * Math.PI;
-    bob = Math.abs(Math.sin(fight.step)) * 0.09 * low * moving - (stumbling ? 0.08 : 0);
-    roll = (Math.sin(fight.step) * 0.14 + Math.sin(fight.step * 0.5) * 0.06) * moving + (stumbling ? fight.whip * 0.25 : 0);
-    lean = (0.14 + 0.08 * Math.sin(fight.step * 2)) * low * moving + (stumbling ? 0.25 : 0);
+    fight.step += v * dt / F.stride * Math.PI;
+    bob = Math.abs(Math.sin(fight.step)) * 0.08 * low * moving - (stumbling ? 0.06 : 0);
+    roll = Math.sin(fight.step) * 0.07 * moving + (stumbling ? fight.whip * 0.2 : 0);
+    lean = (G.lean * Math.min(1, v / F.walk) + 0.05 * Math.sin(fight.step * 2)) * low * moving + (stumbling ? 0.2 : 0);
     M.own.uStride.value = fight.step; M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, G.legs * low * moving, 8, dt);
-    // the head snaps about as it comes, the jaw hanging open
-    M.own.uHeadRot.value.x += Math.sin(fight.step * 2) * 0.12 * moving + (stumbling ? fight.whip : 0);
-    M.own.uHeadRot.value.y += -Math.abs(Math.sin(fight.step)) * 0.1 * moving;
-    M.own.uJaw.value += G.gape * (0.7 + 0.3 * Math.sin(fight.step * 3)) * moving;
-    if (Math.floor(stepBefore / Math.PI) !== Math.floor(fight.step / Math.PI) && moving) sound.thud(0.14 * low); // its steps
-    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0; startEat(M, { leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null }); return; }
+    // the head stays on you (turned from the body's heading), bobbing with the stride, the jaw working open
+    fight.lookYaw = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z) - fight.heading;
+    const ly = Math.atan2(Math.sin(fight.lookYaw), Math.cos(fight.lookYaw)); // (uHeadRot: x turns the head, y nods it, z tilts it)
+    M.own.uHeadRot.value.x = clamp(ly, -0.7, 0.7) + 0.3 * M.own.uHeadRot.value.x + (stumbling ? fight.whip : 0);
+    M.own.uHeadRot.value.y = 0.3 * M.own.uHeadRot.value.y + Math.sin(fight.step * 2) * 0.06 * moving; M.own.uHeadRot.value.z *= 0.3;
+    M.own.uJaw.value += G.gape * (0.6 + 0.4 * Math.sin(fight.step * 2)) * moving;
+    if (Math.floor(stepBefore / Math.PI) !== Math.floor(fight.step / Math.PI) && moving) sound.thud(0.16 * low); // its feet
   } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
     const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k);
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
@@ -1892,7 +1913,7 @@ function nightMove(dt) {
   camera.getWorldDirection(fwd);
   return speed;
 }
-let dbgEyeUp = 0; // debug only: look at the herd from higher up
+let dbgEyeUp = 0, dbgTime = 1; // debug only: look at the herd from higher up; slow the clock
 // the how-to lines (first time only, again when stuck) and the end of the night
 function nightStep(dt) {
   const now = performance.now(), L = lastStation();
@@ -2132,7 +2153,7 @@ function frame(now) {
   if (NIGHT_SCENE && paused) { last = now; return; }
   if (now < nextDue - 1) return;
   nextDue = Math.max(nextDue + FRAME_MS, now + FRAME_MS * 0.6);
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const dt = Math.min(0.1, (now - last) / 1000) * dbgTime; last = now; // (dbgTime: debug only, slow motion for checking)
   const time = now / 1000;
   if (pendingResize) { pendingResize = false; resize(); }
   U.uTime.value = time; FIRE_U.uTime.value = time; LU.uTime.value = time;
@@ -2205,6 +2226,7 @@ function frame(now) {
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
 
+  if (NIGHT_SCENE) monsterMask();
   composer.render(dt);
 
   fpsAcc += dt; fpsN++;
@@ -2639,6 +2661,7 @@ if (DEBUG) {
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
+    slow: (k) => { dbgTime = k; },
     fakeChance: (k) => { NL.scare.fake.chance = k; },
     fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp }),
     shootMonster: () => { const c = monster; if (c && !c.gone) { nightHit(c); return true; } return false; }, hitFight: () => fightHit(),

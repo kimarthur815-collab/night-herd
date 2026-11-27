@@ -258,7 +258,9 @@ export function idleStep(M, dt, t) {
 // still and quiet → it snaps round with the roar and lunges → the open mouth quivers right at your face → the real jaws slam
 // shut and in that instant everything is black. Events: freeze, roar, black. Returns { fade, shake } (fade 1 = black)
 const EAT = { snap: 0.45, lunge: 0.72, shut: 1.02, black: 1.11 };
-export function startEat(M, opts = {}) { M.eat = { t: 0, fired: {}, p0: M.root.position.clone(), q0: M.root.quaternion.clone(), leap: opts.leap ?? null }; }
+// 사용자: 멈추지 않고 달려와 그대로 뛰어 덮침 — a beat to gather (s), in the air until (s), at your face until (s), black at (s) (임시)
+const RUN = { snap: 0.1, lunge: 0.46, shut: 0.6, black: 0.69 };
+export function startEat(M, opts = {}) { M.eat = { t: 0, fired: {}, p0: M.root.position.clone(), q0: M.root.quaternion.clone(), leap: opts.leap ?? null, T: opts.run ? RUN : EAT, run: !!opts.run, d: opts.d ?? 0.62 }; }
 // a leap: up in an arc on the way (highest halfway), the head thrown up as it rises and brought down onto you
 const _la = new THREE.Vector3(), _lq = new THREE.Quaternion(), _lu = new THREE.Vector3(0, 1, 0);
 function leapArc(M, P, v, L) {
@@ -270,17 +272,18 @@ export function eatStep(M, camera, dt, on) {
   const o = M.own, split = !!M.meta.split, max = split ? 0.6 : 0.95;
   s.t += dt; const E = s.t;
   const once = (k, f) => { if (!s.fired[k]) { s.fired[k] = 1; f(); } };
-  once('freeze', on.freeze);
-  if (E >= EAT.snap) once('roar', on.roar);
-  if (E >= EAT.black) { once('black', on.black); return { fade: 1, shake: 0 }; }
+  const T = s.T;
+  if (!s.run) once('freeze', on.freeze); // (running at you, there is no still moment)
+  if (E >= T.snap) once('roar', on.roar);
+  if (E >= T.black) { once('black', on.black); return { fade: 1, shake: 0 }; }
   const H0 = _h0.fromArray(M.meta.headPivot);
-  faceTarget(M, camera, 0.62, max);
+  faceTarget(M, camera, s.d, max);
   let u = 0, turn = 0, push = 0, jaw = o.uJaw.value, shake = 0;
   let crouch = 0, leapV = -1;
-  if (E < EAT.snap) { const k = ease(E / EAT.snap); jaw = jaw * (1 - k) + (split ? -0.18 : -0.2) * k; o.uHeadRot.value.multiplyScalar(1 - k); if (s.leap) crouch = s.leap.crouch * k; } // it gathers itself, low
-  else if (E < EAT.lunge) { const k = (E - EAT.snap) / (EAT.lunge - EAT.snap); u = easeOut(k); turn = easeOut(Math.min(1, k * 1.6)); if (s.leap) { crouch = s.leap.crouch * (1 - Math.min(1, k * 4)); leapV = k; } jaw = -0.2 + (max + 0.2) * easeOut(k * 1.3); o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - k), 0.06 * Math.sin(E * 47)); shake = 0.5; }
-  else if (E < EAT.shut) { u = 1; turn = 1; jaw = max + 0.04 * Math.sin(E * 50); o.uHeadRot.value.set(0.03 * Math.sin(E * 41), 0.03 * Math.sin(E * 37), 0.05 * Math.sin(E * 33)); shake = 0.5; }
-  else { const k = easeIn((E - EAT.shut) / (EAT.black - EAT.shut)); u = 1; turn = 1; push = 0.04 * k; jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; o.uHeadRot.value.set(0, 0, 0); shake = 0.5; }
+  if (E < T.snap) { const k = ease(E / T.snap); jaw = jaw * (1 - k) + (split ? -0.18 : -0.2) * k; o.uHeadRot.value.multiplyScalar(1 - k); if (s.leap) crouch = s.leap.crouch * k; } // it gathers itself, low
+  else if (E < T.lunge) { const k = (E - T.snap) / (T.lunge - T.snap); u = easeOut(k); turn = easeOut(Math.min(1, k * 1.6)); if (s.leap) { crouch = s.leap.crouch * (1 - Math.min(1, k * 4)); leapV = k; } jaw = -0.2 + (max + 0.2) * easeOut(k * 1.3); o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - k), 0.06 * Math.sin(E * 47)); shake = 0.5; }
+  else if (E < T.shut) { u = 1; turn = 1; jaw = max + 0.04 * Math.sin(E * 50); o.uHeadRot.value.set(0.03 * Math.sin(E * 41), 0.03 * Math.sin(E * 37), 0.05 * Math.sin(E * 33)); shake = 0.5; }
+  else { const k = easeIn((E - T.shut) / (T.black - T.shut)); u = 1; turn = 1; push = 0.04 * k; jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; o.uHeadRot.value.set(0, 0, 0); shake = 0.5; }
   const start = _q.copy(H0).applyQuaternion(s.q0).add(s.p0);
   camera.getWorldDirection(_fwd);
   const P = _p.copy(start).lerp(_tgt, u).addScaledVector(_fwd, -push); P.y -= crouch;
