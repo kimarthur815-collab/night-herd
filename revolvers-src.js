@@ -212,7 +212,7 @@ const snd = (() => {
     powderRef(a, t) { // ⑨ ⑤ moved toward the reference: less boom, a shorter held roar under the crack and the tang
       const bus = a.createGain(), sh = shaper(a, 2.5); bus.connect(sh).connect(out); sh.connect(tail(a, 'dry', 900, 0.7));
       burst(a, t, 1800, 'lowpass', 0.7, 0.8, 0.25, bus); burst(a, t, 350, 'lowpass', 0.8, 0.4, 0.45, bus); thump(a, t, 80, 32, 0.35, 0.4, bus);
-      crack(a, t, 1.2, 'dry'); tang(a, t, 1); roar(a, t, 0.45, 0.45, 5000, 0.8);
+      crack(a, t, 1.2, 'dry'); tang(a, t, 1); roar(a, t, 0.34, 0.45, 5000, 0.8);
     },
     ring(a, t) { // ④ the shot, then the ears ring and everything goes muffled
       const bus = a.createGain(), lp = a.createBiquadFilter(); lp.type = 'lowpass';
