@@ -10,6 +10,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fbm } from './cow.js';
+import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 
 const DEBUG = location.hash === '#debug';
 THREE.ShaderChunk.lights_pars_begin = THREE.ShaderChunk.lights_pars_begin.replace(
@@ -226,12 +227,8 @@ async function loadVariants(onProgress) {
 // ---------------- environment ----------------
 // no invisible walls: the ground, grass, plants, sky and horizon travel with the player, so the desert never ends
 const WORLD_FOLLOW = [];
-const GRASS_U = { uGC: { value: new THREE.Vector2(0, -4) } };
-const PLANT_PER = 120; // the cactus and brush field repeats every 120 m around you
-const PLANT_U = { uPC: { value: new THREE.Vector2() } };
 function followWorld(x, z) {
   for (const o of WORLD_FOLLOW) { o.position.x = x; o.position.z = z; }
-  GRASS_U.uGC.value.set(x, z - 4); // grass window, biased toward the herd
   PLANT_U.uPC.value.set(x, z);
 }
 function makeGround() {
@@ -262,54 +259,6 @@ function makeGround() {
 }
 let groundMesh = null;
 
-function makeGrass(count) {
-  const segs = 2, pos = [], nrm = [], idx = [];
-  for (let i = 0; i <= segs; i++) {
-    const t = i / segs, w = 0.007 * (1 - t * 0.85), bend = 0.22 * t * t;
-    pos.push(-w, t, bend, w, t, bend);
-    nrm.push(0, 1, 0, 0, 1, 0);
-    if (i < segs) { const a = 2 * i; idx.push(a, a + 1, a + 3, a, a + 3, a + 2); }
-  }
-  const g = new THREE.BufferGeometry();
-  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.Float32BufferAttribute(nrm, 3));
-  g.setIndex(idx);
-  const m = new THREE.MeshStandardMaterial({ color: 0x8d7c55, roughness: 0.95, side: THREE.DoubleSide }); // dry desert bunchgrass
-  m.onBeforeCompile = (sh) => {
-    sh.uniforms.uGC = GRASS_U.uGC;
-    // each blade keeps its place in the world but wraps by whole tiles to stay near the player
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec2 uGC;')
-      .replace('#include <project_vertex>', `vec4 mvPosition = vec4(transformed, 1.0);
-        #ifdef USE_INSTANCING
-        { mat4 im = instanceMatrix; vec2 per = vec2(28.0, 30.0);
-          im[3].xz += floor((uGC - im[3].xz) / per + 0.5) * per;
-          mvPosition = im * mvPosition; }
-        #endif
-        mvPosition = modelViewMatrix * mvPosition;
-        gl_Position = projectionMatrix * mvPosition;`);
-    sh.fragmentShader = sh.fragmentShader.replace('#include <normal_fragment_begin>', '#include <normal_fragment_begin>\n normal = normalize((viewMatrix * vec4(0.15, 1.0, 0.25, 0.0)).xyz);');
-  };
-  m.customProgramCacheKey = () => 'grass-wrap-v1';
-  const mesh = new THREE.InstancedMesh(g, m, count);
-  mesh.frustumCulled = false;
-  const M = new THREE.Matrix4(), q = new THREE.Quaternion(), s = new THREE.Vector3(), v = new THREE.Vector3(), e = new THREE.Euler(), c = new THREE.Color();
-  let n = 0, guard = 0;
-  while (n < count && guard++ < count * 20) {
-    const x = (Math.random() - 0.5) * 28, z = 5 - Math.random() * 30;
-    if (Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 1.1) continue;
-    const clump = fbm(x * 0.6, 0.3, z * 0.6, 3) * 0.5 + 0.5;
-    if (Math.random() > Math.pow(clump, 2.2) * 2.2 - 0.12) continue; // tufts with bare ground between
-    const h = (0.03 + 0.2 * Math.pow(Math.random(), 2.0) * clump) * (1 + Math.max(0, -z - 10) * 0.02);
-    e.set((Math.random() - 0.5) * 0.9, Math.random() * Math.PI * 2, (Math.random() - 0.5) * 0.9);
-    q.setFromEuler(e); s.set(1 + Math.random(), h, h); v.set(x, 0, z);
-    M.compose(v, q, s); mesh.setMatrixAt(n, M);
-    c.setScalar(0.55 + Math.random() * 0.6); mesh.setColorAt(n, c);
-    n++;
-  }
-  mesh.count = n;
-  return mesh;
-}
-
 // the horizon: two ranges of jagged southern-Arizona mountains, dark against the night haze
 const RIDGE_U = { uHaze: { value: new THREE.Color() }, uLift: { value: 0 } };
 function makeRidges() {
@@ -339,130 +288,22 @@ function makeRidges() {
   return grp;
 }
 
-// cactus and brush: instanced, each kept within half a tile of the player, sinking out of sight near the tile edge
-function wrapPlantMaterial(mat, key) {
-  mat.onBeforeCompile = (sh) => {
-    sh.uniforms.uPC = PLANT_U.uPC;
-    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nuniform vec2 uPC;')
-      .replace('#include <project_vertex>', `vec4 mvPosition = vec4(transformed, 1.0);
-        #ifdef USE_INSTANCING
-        { mat4 im = instanceMatrix; float per = ${PLANT_PER.toFixed(1)};
-          im[3].xz += floor((uPC - im[3].xz) / per + 0.5) * per;
-          vec2 off = abs(im[3].xz - uPC);
-          mvPosition.xyz *= 1.0 - smoothstep(per * 0.36, per * 0.48, max(off.x, off.y));
-          mvPosition = im * mvPosition; }
-        #endif
-        mvPosition = modelViewMatrix * mvPosition;
-        gl_Position = projectionMatrix * mvPosition;`);
-    // only half fogged, so at night they stand as dark shapes against the haze instead of fading into pale ghosts
-    sh.fragmentShader = sh.fragmentShader.replace('#include <fog_fragment>', `#ifdef USE_FOG
-        float fogFactor = 1.0 - exp(-fogDensity * fogDensity * vFogDepth * vFogDepth);
-        gl_FragColor.rgb = mix(gl_FragColor.rgb, fogColor, fogFactor * 0.5);
-        #endif`);
-  };
-  mat.customProgramCacheKey = () => key;
-  return mat;
+const plantClear = (x, z) => x > -8 && x < 9 && z > -17 && z < 6; // the camp and the herd stay open
+let saguaroField = null, brushFields = [], gustAmt = 0;
+function updatePlants(dt, gusting) {
+  gustAmt = damp(gustAmt, gusting ? 1 : 0, gusting ? 1.8 : 0.7, dt);
+  WIND_U.uTime.value = performance.now() / 1000; WIND_U.uGust.value = gustAmt;
+  if (saguaroField) saguaroField.update(player.pos.x, player.pos.z, camera);
+  for (const f of brushFields) f.update(player.pos.x, player.pos.z, camera);
 }
-function saguaroGeometry(h, arms, seed) {
-  const R0 = 0.2 + 0.025 * h, prof = [];
-  for (let i = 0; i <= 10; i++) prof.push(new THREE.Vector2(R0 * (1 - 0.06 * (i / 10)), (h - R0) * (i / 10)));
-  for (let i = 1; i <= 6; i++) { const a = (i / 6) * Math.PI / 2; prof.push(new THREE.Vector2(R0 * 0.94 * Math.cos(a) + 1e-3, h - R0 + R0 * 0.94 * Math.sin(a))); }
-  const parts = [new THREE.LatheGeometry(prof, 36)];
-  for (let k = 0; k < arms; k++) {
-    const ang = seed * 2.1 + k * (2 * Math.PI / arms) + Math.sin(seed + k) * 0.6;
-    const dx = Math.cos(ang), dz = Math.sin(ang);
-    const ya = h * (0.38 + 0.18 * ((seed * 7 + k * 3) % 5) / 5), up = h * (0.22 + 0.12 * ((seed + k) % 3) / 3), out = 0.55 + 0.25 * ((k + seed) % 2);
-    const Ra = R0 * 0.62;
-    const curve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(dx * R0 * 0.3, ya, dz * R0 * 0.3), new THREE.Vector3(dx * out * 0.7, ya + 0.04, dz * out * 0.7),
-      new THREE.Vector3(dx * out, ya + 0.35, dz * out), new THREE.Vector3(dx * out * 1.02, ya + up * 0.7, dz * out * 1.02), new THREE.Vector3(dx * out, ya + up, dz * out),
-    ]);
-    parts.push(new THREE.TubeGeometry(curve, 20, Ra, 12, false));
-    const cap = new THREE.SphereGeometry(Ra, 12, 8); cap.translate(dx * out, ya + up, dz * out); parts.push(cap);
-  }
-  const g = mergeGeometries(parts);
-  // ribs: ripple the surface around the vertical axis
-  const P = g.attributes.position;
-  for (let i = 0; i < P.count; i++) {
-    const x = P.getX(i), z = P.getZ(i), r = Math.hypot(x, z);
-    if (r < R0 * 1.05 && r > 1e-4) { const k = 1 + 0.07 * Math.cos(Math.atan2(z, x) * 12); P.setX(i, x * k); P.setZ(i, z * k); }
-  }
-  g.computeVertexNormals();
-  return g;
-}
-function ocotilloGeometry(seed) {
-  const parts = [];
-  const n = 9 + (seed % 4);
-  for (let i = 0; i < n; i++) {
-    const len = 2.6 + 2.2 * ((Math.sin(seed * 13.7 + i * 4.1) + 1) / 2);
-    const g = new THREE.CylinderGeometry(0.012, 0.035, len, 5, 3, false);
-    g.translate(0, len / 2, 0);
-    const lean = 0.18 + 0.4 * ((Math.sin(seed + i * 2.3) + 1) / 2), turn = (i / n) * Math.PI * 2 + seed;
-    g.rotateZ(lean); g.rotateY(turn);
-    parts.push(g);
-  }
-  return mergeGeometries(parts);
-}
-function shrubGeometry(seed) {
-  const parts = [];
-  for (let i = 0; i < 5; i++) {
-    const r = 0.32 + 0.22 * ((Math.sin(seed * 3.3 + i * 1.7) + 1) / 2);
-    const g = new THREE.IcosahedronGeometry(r, 1);
-    g.scale(1, 0.75, 1);
-    g.translate(Math.cos(i * 2.4 + seed) * 0.35, r * 0.6 + 0.05 * i, Math.sin(i * 2.4 + seed) * 0.35);
-    parts.push(g);
-  }
-  return mergeGeometries(parts.map((p) => { p.deleteAttribute('uv'); return p; }));
-}
-const SAGUAROS = []; // base positions and trunk radii, so you can't walk through them
-function makeDesertPlants() {
-  const grp = new THREE.Group();
-  const clear = (x, z) => x > -8 && x < 9 && z > -17 && z < 6; // the camp and the herd stay open
-  const spot = () => { let x, z; do { x = (Math.random() - 0.5) * PLANT_PER; z = (Math.random() - 0.5) * PLANT_PER; } while (clear(x, z)); return [x, z]; };
-  const M = new THREE.Matrix4(), Q = new THREE.Quaternion(), S = new THREE.Vector3(), P = new THREE.Vector3(), Y = new THREE.Vector3(0, 1, 0);
-  const cactusMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.15, 0.19, 0.12), roughness: 0.8 }), 'plant-cactus');
-  [[7.5, 2, 1], [9.5, 3, 2], [4.5, 0, 3], [6.2, 1, 4]].forEach(([h, arms, seed], v) => {
-    const mesh = new THREE.InstancedMesh(saguaroGeometry(h, arms, seed), cactusMat, 12);
-    for (let i = 0; i < 12; i++) {
-      const [x, z] = spot(), s = 0.8 + Math.random() * 0.4;
-      M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * Math.PI * 2), S.set(s, s, s));
-      mesh.setMatrixAt(i, M);
-      SAGUAROS.push({ x, z, r: (0.2 + 0.025 * h) * s + 0.05 });
-    }
-    mesh.frustumCulled = false; grp.add(mesh);
-  });
-  const stemMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.12, 0.1, 0.08), roughness: 0.9 }), 'plant-stem');
-  [1, 2].forEach((seed) => {
-    const mesh = new THREE.InstancedMesh(ocotilloGeometry(seed), stemMat, 8);
-    for (let i = 0; i < 8; i++) { const [x, z] = spot(); M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * 6.28), S.setScalar(0.8 + Math.random() * 0.4)); mesh.setMatrixAt(i, M); }
-    mesh.frustumCulled = false; grp.add(mesh);
-  });
-  const brushMat = wrapPlantMaterial(new THREE.MeshStandardMaterial({ color: new THREE.Color(0.1, 0.11, 0.065), roughness: 1.0 }), 'plant-brush');
-  [1, 2, 3].forEach((seed) => {
-    const n = 90, mesh = new THREE.InstancedMesh(shrubGeometry(seed), brushMat, n);
-    for (let i = 0; i < n; i++) { const [x, z] = spot(); M.compose(P.set(x, 0, z), Q.setFromAxisAngle(Y, Math.random() * 6.28), S.setScalar(0.6 + Math.random() * 0.9)); mesh.setMatrixAt(i, M); }
-    mesh.frustumCulled = false; grp.add(mesh);
-  });
-  return grp;
-}
-
 // tumbleweeds: they rest, and roll past when a gust comes through
 const WIND = new THREE.Vector3(1, 0, 0.35).normalize();
 const tumbles = [];
 function makeTumbleweeds(scene) {
-  const parts = [];
-  for (let i = 0; i < 52; i++) {
-    const len = 0.16 + Math.random() * 0.3, g = new THREE.CylinderGeometry(0.005, 0.008, len, 4, 1, true);
-    const dir = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize();
-    g.applyQuaternion(new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir));
-    const c = new THREE.Vector3(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize().multiplyScalar(0.05 + Math.random() * 0.17);
-    g.translate(c.x, c.y, c.z);
-    parts.push(g);
-  }
-  const geo = mergeGeometries(parts);
-  const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(0.4, 0.33, 0.21), roughness: 1, side: THREE.DoubleSide });
+  const geos = [3, 7].map((sd) => tumbleweedGeometry(sd));
+  const mat = plantMaterial('tumble-v1', 0.95);
   for (let i = 0; i < 4; i++) {
-    const s = 0.8 + Math.random() * 0.5, mesh = new THREE.Mesh(geo, mat);
+    const s = 0.8 + Math.random() * 0.5, mesh = new THREE.Mesh(geos[i % 2], mat);
     mesh.scale.setScalar(s); scene.add(mesh);
     tumbles.push({ mesh, r: 0.28 * s, pos: new THREE.Vector3(), speed: 0, k: 0.8 + Math.random() * 0.4, side: Math.random() - 0.5, phase: Math.random() * 6 });
   }
@@ -1042,7 +883,7 @@ vmScene.add(vmFlame, vmFire, new THREE.HemisphereLight(0x1a2030, 0x080604, 0.12)
 // ---------------- scene assembly ----------------
 const sky = makeSky();
 const ridges = makeRidges();
-scene.add(sky, makeGround(), makeGrass(20000), ridges, makeDesertPlants());
+scene.add(sky, makeGround(), ridges);
 if (!WALK) scene.add(makeCampfire());
 const LANTERN_I = 9.5;
 const lanternLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), LANTERN_I, 40, 1.4);
@@ -1079,6 +920,7 @@ function resize() {
   camera.updateProjectionMatrix(); vmCamera.updateProjectionMatrix();
   finalPass.uniforms.uRes.value.set(Math.round(w * pr), Math.round(h * pr));
   kuwaPass.uniforms.uRes.value.copy(finalPass.uniforms.uRes.value);
+  if (saguaroField) saguaroField.setPixel(camera, finalPass.uniforms.uRes.value.y);
   document.body.classList.toggle('portrait', w < h);
 }
 addEventListener('resize', resize);
@@ -1511,6 +1353,7 @@ function frame(now) {
 
   // walking
   const speed = movePlayer(dt);
+  updatePlants(dt, lamp.gustT >= 0);
   const bobA = clamp(speed / 1.5, 0, 1);
 
   // the lantern
@@ -1590,7 +1433,7 @@ const DAYLOOK = {
 };
 let sun = null, windT = 12, gustLeft = 0;
 function setupDay() {
-  sun = new THREE.DirectionalLight(new THREE.Color(1.0, 0.93, 0.82), 6.0);
+  sun = new THREE.DirectionalLight(new THREE.Color(1.0, 0.93, 0.82), 5.4);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 140 });
@@ -1600,7 +1443,7 @@ function setupDay() {
   renderer.shadowMap.type = THREE.PCFShadowMap;
   groundMesh.receiveShadow = true;
   for (const t of tumbles) t.mesh.castShadow = true;
-  hemi.color.setRGB(0.55, 0.65, 0.85); hemi.groundColor.setRGB(0.32, 0.26, 0.19); hemi.intensity = 0.75;
+  hemi.color.setRGB(0.55, 0.65, 0.85); hemi.groundColor.setRGB(0.32, 0.26, 0.19); hemi.intensity = 1.15; // shade lit by the open sky, not black
   moon.intensity = 0;
   scene.fog.color.copy(DAYLOOK.fog); scene.fog.density = DAYLOOK.fogD;
   sky.material.uniforms.uHor.value.copy(DAYLOOK.hor); sky.material.uniforms.uZen.value.copy(DAYLOOK.zen);
@@ -1805,6 +1648,7 @@ function frameWalk(now) {
   if (pendingResize) { pendingResize = false; resize(); }
   U.uTime.value = time;
   movePlayer(dt);
+  updatePlants(dt, gustLeft > 0);
   sun.target.position.set(player.pos.x, 0, player.pos.z);
   sun.position.set(player.pos.x + 38, 46, player.pos.z + 30);
   windT -= dt;
@@ -1836,9 +1680,19 @@ function frameWalk(now) {
   try {
     if (!WALK) { makeLantern(); makeArm(); }
     let parts = 0;
-    const total = WALK ? 3 : 4;
+    const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1;
     const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
-    const [geos] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump)]);
+    const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
+      Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
+      Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; })]);
+    saguaroField = new SaguaroField(sculpts, plantClear);
+    scene.add(saguaroField.group);
+    brushFields = makeBrush(plantClear); // after the saguaros, so no bush grows through a trunk
+    brushFields.push(...makeDeadThings(boneSculpts, plantClear));
+    brushFields.push(makeGrass((x, z) => Math.hypot(x - FIRE_POS.x, z - FIRE_POS.z) < 1.3)); // grass grows by the herd too, not in the fire
+    for (const f of brushFields) scene.add(f.group);
+    saguaroField.setPixel(camera, finalPass.uniforms.uRes.value.y);
+    saguaroField.update(player.pos.x, player.pos.z, camera);
     HERD.forEach((h, i) => {
       const toCamp = Math.atan2(0 - h.x, 0.5 - h.z);
       const mesh = new THREE.Mesh(geos[h.v], cowMaterial(h.coat, h.face ?? h.coat, i * 1.7));
@@ -1859,6 +1713,8 @@ function frameWalk(now) {
     if (WALK) {
       setupDay();
       for (const c of cows) { c.mesh.castShadow = true; c.mesh.receiveShadow = true; c.mesh.customDepthMaterial = cowDepthMaterial(c.mesh.material.userData.own); }
+      saguaroField.setShadows(true);
+      for (const f of brushFields) f.setShadows(true);
     }
     for (const t of tumbles) spawnTumble(t, true);
     renderer.compile(scene, camera);
@@ -1920,6 +1776,15 @@ if (DEBUG) {
     setCount: (n) => { count = n; },
     herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2), +c.heading.toFixed(2)]),
     gap: () => herdGap(),
+    raw: (on) => { kuwaPass.enabled = !on; },
+    plantsNear: (f) => { const F = [saguaroField, ...brushFields][f]; return F ? F.items.map((it) => { const x = it.x + Math.round((player.pos.x - it.x) / PLANT_PER) * PLANT_PER, z = it.z + Math.round((player.pos.z - it.z) / PLANT_PER) * PLANT_PER;
+      return { v: it.v, x: +x.toFixed(2), z: +z.toFixed(2), d: +Math.hypot(x - player.pos.x, z - player.pos.z).toFixed(1), H: +it.H.toFixed(2) }; }).sort((a, b) => a.d - b.d) : []; },
+    trisBy: () => { const c = (root) => { let t = 0; root.traverse((o) => { if (o.visible && o.geometry && o.geometry.index) { const n = o.isInstancedMesh ? o.count : o.geometry.isInstancedBufferGeometry ? o.geometry.instanceCount : 1; t += (o.geometry.index.count / 3) * n; } }); return Math.round(t); };
+      const out = { cows: 0 }; for (const cw of cows) out.cows += c(cw.mesh);
+      out.saguaro = c(saguaroField.group); ['ocotillo', 'creosote', 'bursage', 'skeleton', 'bones', 'grass'].forEach((k, i) => { out[k] = c(brushFields[i].group); }); return out; },
+    tris: () => { let t = 0; scene.traverse((o) => { if (o.visible && o.geometry && o.geometry.index) { const n = o.isInstancedMesh ? o.count : o.geometry.isInstancedBufferGeometry ? o.geometry.instanceCount : 1; t += (o.geometry.index.count / 3) * n; } }); return t; },
+    saguaros: () => saguaroField ? saguaroField.items.map((it) => { const x = it.x + Math.round((player.pos.x - it.x) / PLANT_PER) * PLANT_PER, z = it.z + Math.round((player.pos.z - it.z) / PLANT_PER) * PLANT_PER;
+      return { kind: SAGUARO_KINDS[it.v], x: +x.toFixed(2), z: +z.toFixed(2), d: +Math.hypot(x - player.pos.x, z - player.pos.z).toFixed(1), H: +it.H.toFixed(1) }; }).sort((a, b) => a.d - b.d) : [],
     herdRaw: () => cows.map((c) => [c.mesh.position.x, c.mesh.position.z, c.heading, c.stir, c.speed]),
     // run the day herd without drawing: hold a key for `secs` (or nothing), at a fixed 60 steps a second
     sim: (secs, code, yaw) => {

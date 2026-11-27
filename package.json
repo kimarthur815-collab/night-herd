@@ -11,12 +11,16 @@
     "build:lantern": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --define:WALK=false --outfile=lantern/lantern.js",
     "build": "npm run build:slice && npm run build:lantern && npm run build:walk",
     "serve": "python3 -m http.server 8000",
-    "build:walk": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --define:WALK=true --outfile=walk/walk.js"
+    "build:walk": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --define:WALK=true --outfile=walk/walk.js",
+    "bake:plants": "node --max-old-space-size=6000 gen-plants.mjs 0.012 plants/data && npm run copy:plants",
+    "copy:plants": "for d in slice lantern walk; do mkdir -p $d/plants && cp plants/data/*.json $d/plants/; done",
+    "sculptview": "esbuild sculptview-src.js --bundle --format=esm --target=es2022 --outfile=sculptview.js"
   },
   "dependencies": {
     "three": "^0.187.0"
   },
   "devDependencies": {
-    "esbuild": "^0.25.12"
+    "esbuild": "^0.25.12",
+    "meshoptimizer": "^1.3.0"
   }
 }

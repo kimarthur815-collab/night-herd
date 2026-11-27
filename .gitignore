@@ -4,3 +4,5 @@ node_modules
 /preview/
 *.png
 *.bak.js
+/plants/data/
+/sculptview.js

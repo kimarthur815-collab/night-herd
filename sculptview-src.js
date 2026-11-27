@@ -1,0 +1,24 @@
+// dev tool: one baked piece on a turntable, to check its shape. sculptview.html?f=plants/data/bone-skull.json&lod=0&yaw=0&pitch=0.3&dist=0.9
+import * as THREE from 'three';
+import { loadSculpt, boneMaterial, saguaroMaterial } from './plants.js';
+const q = new URLSearchParams(location.search);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(innerWidth, innerHeight); renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = 0.8;
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene(); scene.background = new THREE.Color(0.32, 0.28, 0.22);
+const cam = new THREE.PerspectiveCamera(35, innerWidth / innerHeight, 0.01, 50);
+scene.add(new THREE.HemisphereLight(0x9ab0d0, 0x4a3a28, 1.2));
+const sun = new THREE.DirectionalLight(0xfff0dd, 3.2); sun.position.set(2, 3, 1.5); scene.add(sun);
+const ground = new THREE.Mesh(new THREE.PlaneGeometry(10, 10), new THREE.MeshStandardMaterial({ color: 0x6b5a44, roughness: 1 }));
+ground.rotation.x = -Math.PI / 2; ground.position.y = Number(q.get('gy') || -0.1); scene.add(ground);
+const sc = await loadSculpt(q.get('f'));
+const g = sc.lods[Number(q.get('lod') || 0)];
+const mesh = new THREE.Mesh(g, q.get('f').includes('saguaro') ? saguaroMaterial() : boneMaterial());
+scene.add(mesh);
+g.computeBoundingSphere();
+const c = g.boundingSphere.center, r = g.boundingSphere.radius, dist = Number(q.get('dist') || r * 3.2);
+const yaw = Number(q.get('yaw') || 0), pitch = Number(q.get('pitch') || 0.3);
+cam.position.set(c.x + Math.sin(yaw) * Math.cos(pitch) * dist, c.y + Math.sin(pitch) * dist, c.z + Math.cos(yaw) * Math.cos(pitch) * dist);
+cam.lookAt(c);
+renderer.render(scene, cam);
+window.__done = true;
