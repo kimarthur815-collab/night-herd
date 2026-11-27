@@ -96,15 +96,34 @@ function step(g, dt) {
 let shotKind = 'powderCrack', dropKind = 'rock';
 const snd = (() => {
   let ac = null, nb = null, out = null;
-  const irs = {};
+  let irs = {};
   const ctx = () => {
     if (!ac) {
       try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
       out = ac.createDynamicsCompressor(); out.threshold.value = -8; out.ratio.value = 6; out.connect(ac.destination);
     }
     if (ac.state === 'suspended') ac.resume();
-    if (!nb) { nb = ac.createBuffer(1, ac.sampleRate * 1.5, ac.sampleRate); const d = nb.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+    if (!nb) nb = noise(ac);
     return ac;
+  };
+  const noise = (a) => { const b = a.createBuffer(1, a.sampleRate * 3, a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; };
+  // the reference's shape: a bright crack, then a dense roar that holds about half a second, shimmering, and rolls away
+  const roar = (a, t, level, hold, bright) => {
+    const src = a.createBufferSource(); src.buffer = nb;
+    const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
+    const lp = a.createBiquadFilter(); lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(bright, t); lp.frequency.exponentialRampToValueAtTime(1800, t + hold * 0.6); lp.frequency.exponentialRampToValueAtTime(1000, t + hold + 0.9);
+    const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 850; bp.Q.value = 0.6; // the weight of it sits in the middle
+    const bg = a.createGain(); bg.gain.value = 1.7;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + 0.006); g.gain.linearRampToValueAtTime(level * 0.85, t + hold);
+    g.gain.exponentialRampToValueAtTime(level * 0.3, t + hold + 0.08); g.gain.exponentialRampToValueAtTime(level * 0.12, t + hold + 0.45); g.gain.exponentialRampToValueAtTime(level * 0.01, t + hold + 0.9);
+    hp.connect(bp).connect(bg).connect(g);
+    const wob = a.createGain(); wob.gain.value = 1; // the shimmer: the roar's loudness wanders a few dB
+    const mod = a.createBufferSource(); mod.buffer = nb; const ml = a.createBiquadFilter(); ml.type = 'lowpass'; ml.frequency.value = 30; const md = a.createGain(); md.gain.value = 2.2;
+    mod.connect(ml).connect(md).connect(wob.gain);
+    src.connect(hp).connect(lp).connect(g).connect(wob).connect(out);
+    src.start(t, Math.random() * 0.5); src.stop(t + hold + 1); mod.start(t, Math.random()); mod.stop(t + hold + 1);
   };
   const burst = (a, t, f, type, q, gain, dur, dest) => {
     const s = a.createBufferSource(); s.buffer = nb;
@@ -183,6 +202,15 @@ const snd = (() => {
     powderCrack(a, t) { SHOTS.powder(a, t, 'dry'); crack(a, t, 1, 'dry'); tang(a, t, 1); }, // ⑤ ② with ①'s crack, no echo, a little "tang"
     powderTang(a, t) { SHOTS.powder(a, t, 'dry'); crack(a, t, 1, 'dry'); tang(a, t, 1.8); }, // ⑦ the same with more "tang"
     powderCrack2(a, t) { SHOTS.powder(a, t); crack(a, t, 1.5); }, // ⑥ the same, the crack louder and a hair longer
+    ref(a, t) { // ⑧ after the reference clip: the crack bright up to 10 kHz, the roar held, the low end light
+      burst(a, t, 6000, 'bandpass', 0.9, 2.6, 0.045); burst(a, t, 2500, 'bandpass', 0.7, 1.0, 0.08); burst(a, t, 600, 'lowpass', 0.7, 0.7, 0.07);
+      roar(a, t, 0.45, 0.6, 5000); thump(a, t, 90, 40, 0.22, 0.3);
+    },
+    powderRef(a, t) { // ⑨ ⑤ moved toward the reference: less boom, a shorter held roar under the crack and the tang
+      const bus = a.createGain(), sh = shaper(a, 2.5); bus.connect(sh).connect(out); sh.connect(tail(a, 'dry', 900, 0.7));
+      burst(a, t, 1800, 'lowpass', 0.7, 0.8, 0.25, bus); burst(a, t, 350, 'lowpass', 0.8, 0.4, 0.45, bus); thump(a, t, 80, 32, 0.35, 0.4, bus);
+      crack(a, t, 1.2, 'dry'); tang(a, t, 1); roar(a, t, 0.45, 0.45, 5000);
+    },
     ring(a, t) { // ④ the shot, then the ears ring and everything goes muffled
       const bus = a.createGain(), lp = a.createBiquadFilter(); lp.type = 'lowpass';
       lp.frequency.setValueAtTime(12000, t); lp.frequency.exponentialRampToValueAtTime(650, t + 0.12);
@@ -201,6 +229,15 @@ const snd = (() => {
     slide() { const a = ctx(); if (a) burst(a, a.currentTime, 2500, 'bandpass', 2, 0.12, 0.12); }, // the rod pushing a case out
     drop() { const a = ctx(); if (a) DROPS[dropKind](a, a.currentTime); },
     insert() { const a = ctx(); if (a) burst(a, a.currentTime, 1200, 'bandpass', 3, 0.25, 0.05); },
+    async render(kind, sec = 2.5) { // for measuring: one shot rendered offline, mono 48 kHz
+      const save = [ac, out, nb, irs], o = new OfflineAudioContext(1, Math.floor(48000 * sec), 48000);
+      ac = o; nb = noise(o); irs = {};
+      out = o.createDynamicsCompressor(); out.threshold.value = -8; out.ratio.value = 6; out.connect(o.destination);
+      SHOTS[kind](o, 0.05);
+      const b = await o.startRendering();
+      [ac, out, nb, irs] = save;
+      return Array.from(b.getChannelData(0));
+    },
   };
 })();
 const ON = {
@@ -342,4 +379,4 @@ function frame(now) {
 }
 requestAnimationFrame(frame);
 window.__rv = { ready, setGun, setView, setLight, cock: () => cock(cur), fire: () => fire(cur), reload: () => reloadRevolver(cur.r, ON), view, setSpin: (s) => (spin = s), get cur() { return cur; },
-  setAim: (k) => { aimKind = k; }, setShot: (k) => { shotKind = k; }, setSpeed: (k) => { speed = k; } };
+  setAim: (k) => { aimKind = k; }, setShot: (k) => { shotKind = k; }, setSpeed: (k) => { speed = k; }, renderShot: (k) => snd.render(k) };
