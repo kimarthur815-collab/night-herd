@@ -16,7 +16,7 @@ import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, upd
 import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 import { NL, hillH } from './night-layout.js';
-import { loadMonster, startScare, scareStep, MONSTERS, idleStep, startEat, eatStep } from './monster-model.js';
+import { loadMonster, startScare, scareStep, MONSTERS, idleStep, startEat, eatStep, mouthWorld } from './monster-model.js';
 import { makeMonsterSound } from './monster-sound.js';
 
 const DEBUG = location.hash === '#debug';
@@ -2661,6 +2661,8 @@ if (DEBUG) {
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
+    mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
+    monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
     slow: (k) => { dbgTime = k; },
     fakeChance: (k) => { NL.scare.fake.chance = k; },

@@ -64,7 +64,7 @@ function monsterMaterial(info, uTime) {
     uJawH: { value: new THREE.Vector3() }, uHeadRot: { value: new THREE.Vector3() }, uNeckP: { value: new THREE.Vector3() }, uNeck: { value: new THREE.Vector2() },
     uJaw: { value: 0 }, uSplit: { value: 0 }, uBreath: { value: 0 }, uSway: { value: 1 },
     uSkin: { value: new THREE.Color(...info.skin) }, uWr: { value: new THREE.Vector3(...info.wr).normalize() }, uSmoke: { value: info.smoke ?? 0 },
-    uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() }, uAppear: { value: 1 },
+    uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() }, uAppear: { value: 1 }, uDbgMouth: { value: 0 },
     uStride: { value: 0 }, uStrideAmt: { value: 0 }, uLimbHip: { value: [0, 1, 2, 3].map(() => new THREE.Vector3()) }, uLimbKnee: { value: [0, 1, 2, 3].map(() => new THREE.Vector3()) }, uLimbPh: { value: [0, 0, 0, 0] },
   };
   m.userData.own = own;
@@ -77,7 +77,7 @@ function monsterMaterial(info, uTime) {
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        uniform float uTime, uIR, uSmoke, uEyeGain, uEyeSelf, uEyeShine, uAppear; uniform vec3 uSkin, uWr, uLightP;
+        uniform float uTime, uIR, uSmoke, uEyeGain, uEyeSelf, uEyeShine, uAppear, uDbgMouth; uniform vec3 uSkin, uWr, uLightP;
         varying vec3 vObj; varying vec4 vMat; varying vec4 vExt; varying vec2 vAtt; varying vec3 vWP;
         ${NOISE}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
@@ -122,7 +122,8 @@ function monsterMaterial(info, uTime) {
         { float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
           float dl = length(vWP - uLightP);
           float shine = min(5.0, uEyeGain * pow(fc, 4.0) / pow(max(dl, 1.3), 1.5)) * uEyeShine;
-          totalEmissiveRadiance += vExt.x * vec3(0.96, 1.0, 0.9) * (shine + uEyeSelf * (0.4 + 0.6 * fc)); }`);
+          totalEmissiveRadiance += vExt.x * vec3(0.96, 1.0, 0.9) * (shine + uEyeSelf * (0.4 + 0.6 * fc));
+          totalEmissiveRadiance += uDbgMouth * vec3(0.0, step(0.5, vMat.y), 0.0) * 0.25; }`);
   };
   m.customProgramCacheKey = () => 'game-monster-v4';
   return { mat: m, own };
@@ -164,7 +165,52 @@ export async function loadMonster(url, id, uTime) {
   own.uNeckP.value.fromArray(meta.neck ? meta.neck.base : [0, 1.5, -0.05]);
   (meta.limbs || []).slice(0, 4).forEach((L, i) => { own.uLimbHip.value[i].fromArray(L.hip); own.uLimbKnee.value[i].fromArray(L.knee); own.uLimbPh.value[i] = L.arm ? (L.side > 0 ? Math.PI : 0) : (L.side * L.fore > 0 ? Math.PI : 0); });
   const root = new THREE.Group(); root.add(mesh); root.visible = false;
-  return { id, meta, info, mesh, root, own };
+  return { id, meta, info, mesh, root, own, mouth: findMouth(mesh.geometry, meta) };
+}
+// the inside of the mouth (the dark mouth surface), in the rest pose, split in two: the part that stays with the skull and
+// the part on the jaw (or, for the split head, the left and the right half), with each vertex's own jaw and head weights,
+// so the middle of the open mouth can be followed exactly as the shader moves it
+function findMouth(g, meta) {
+  const P = g.attributes.position.array, Mt = g.attributes.aMat.array, R = g.attributes.aRig.array, hp = meta.headPivot, hx = meta.headX;
+  const v = [];
+  for (let i = 0; i < P.length / 3; i++) {
+    if (Mt[4 * i + 1] < 128) continue; // mouth material only
+    const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2];
+    const side = (x - hp[0]) * hx[0] + (y - hp[1]) * hx[1] + (z - hp[2]) * hx[2] + 1e-5 < 0 ? -1 : 1;
+    const wj = R[4 * i] / 255, wh = R[4 * i + 1] / 255;
+    v.push(x, y, z, wj, wh, side, meta.split ? (side < 0 ? 0 : 1) : (wj < 0.5 ? 0 : 1));
+  }
+  const n = [0, 0]; for (let k = 6; k < v.length; k += 7) n[v[k]]++;
+  return n[0] && n[1] ? { v: new Float32Array(v), n, split: !!meta.split } : null;
+}
+// where the middle of the inside of the mouth is now (the same rig as the shader: jaw, then head), in the world
+const _mp = new THREE.Vector3(), _mq = new THREE.Quaternion(), _mq2 = new THREE.Quaternion(), _hx = new THREE.Vector3(), _hy2 = new THREE.Vector3(), _hz = new THREE.Vector3(), _hp = new THREE.Vector3(), _jh = new THREE.Vector3();
+const _acc = [new THREE.Vector3(), new THREE.Vector3()];
+export function mouthWorld(M, out) {
+  const o = M.own, m = M.mouth; if (!m) return null;
+  _hx.copy(o.uHeadX.value); _hy2.copy(o.uHeadY.value); _hz.copy(o.uHeadZ.value); _hp.copy(o.uHeadP.value); _jh.copy(o.uJawH.value);
+  const jaw = o.uJaw.value, r = o.uHeadRot.value, V = m.v;
+  _acc[0].set(0, 0, 0); _acc[1].set(0, 0, 0);
+  for (let k = 0; k < V.length; k += 7) {
+    _mp.set(V[k], V[k + 1], V[k + 2]);
+    const wj = V[k + 3], wh = V[k + 4];
+    if (wj > 0) _mp.sub(_jh).applyQuaternion(m.split ? _mq.setFromAxisAngle(_hy2, jaw * wj * V[k + 5]) : _mq.setFromAxisAngle(_hx, jaw * wj)).add(_jh);
+    if (wh > 0) { // rH = aa(Y, r.x w) * aa(X, r.y w) * aa(Z, r.z w)
+      _mp.sub(_hp).applyQuaternion(_mq.setFromAxisAngle(_hz, r.z * wh)).applyQuaternion(_mq2.setFromAxisAngle(_hx, r.y * wh)).applyQuaternion(_mq.setFromAxisAngle(_hy2, r.x * wh)).add(_hp);
+    }
+    _acc[V[k + 6]].add(_mp);
+  }
+  out.copy(_acc[0]).multiplyScalar(0.5 / m.n[0]).addScaledVector(_acc[1], 0.5 / m.n[1]); // halfway between the two
+  return out.multiply(M.root.scale).applyQuaternion(M.root.quaternion).add(M.root.position);
+}
+// at your face, the middle of the open mouth sits exactly in the middle of the screen (k: how much, 0..1)
+const _mw = new THREE.Vector3(), _cf = new THREE.Vector3(), _cd = new THREE.Vector3();
+function centreMouth(M, camera, k) {
+  if (k <= 0 || !mouthWorld(M, _mw)) return;
+  camera.getWorldDirection(_cf);
+  const depth = _cd.copy(_mw).sub(camera.position).dot(_cf);
+  _cd.copy(camera.position).addScaledVector(_cf, depth).sub(_mw); // from the mouth's middle to the line straight ahead
+  M.root.position.addScaledVector(_cd, k);
 }
 
 // ---------------- the jumpscare (괴물 후보 페이지의 ② 멀리서 순식간에와 같은 시간) ----------------
@@ -233,6 +279,7 @@ export function scareStep(M, camera, dt, on) {
   if (E >= shutT) { const k = Math.min(1, ((E - shutT) / SNAP.close) ** 2); o.uHeadRot.value.multiplyScalar(1 - k); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; M.root.position.addScaledVector(_fwd, SNAP.pull * k); } // shut where you can see it
   o.uJaw.value = jaw;
   o.uHeadRot.value.z += (M.twist ?? 0) * (1 - u); o.uHeadRot.value.y += M.hang ?? 0; // the broken neck (at your face the whole of it is turned, see twistOn)
+  centreMouth(M, camera, u); // 사용자: 덮칠 때 입 안 가운데가 화면 가운데
   // close up, the eyes must not wash out the face
   const dHead = camera.position.distanceTo(_p.copy(H0).applyQuaternion(M.root.quaternion).add(M.root.position)), dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
@@ -305,6 +352,7 @@ export function eatStep(M, camera, dt, on) {
   twistOn(M, u);
   o.uJaw.value = jaw;
   o.uHeadRot.value.z += (M.twist ?? 0) * (1 - u); o.uHeadRot.value.y += M.hang ?? 0; // the broken neck (at your face the whole of it is turned, see twistOn)
+  centreMouth(M, camera, u); // 사용자: 덮칠 때 입 안 가운데가 화면 가운데
   const dHead = camera.position.distanceTo(_p.copy(H0).applyQuaternion(M.root.quaternion).add(M.root.position)), dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
   return { fade: 0, shake };
