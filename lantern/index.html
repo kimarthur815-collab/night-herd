@@ -47,6 +47,14 @@ body.playing.touch .pad{display:flex}
 #knob{position:absolute;left:50%;top:50%;width:46px;height:46px;border-radius:50%;background:rgba(230,225,214,.35);transform:translate(-50%,-50%)}
 #resume{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);display:none;z-index:4}
 #resume.show{display:block}
+#fsBtn{position:fixed;top:8px;left:10px;width:44px;height:44px;display:none;place-items:center;padding:0;border:1px solid rgba(230,225,214,.35);border-radius:10px;background:rgba(5,5,6,.45);color:var(--ink);cursor:pointer;z-index:4}
+body.playing #fsBtn{display:grid}
+#fsBtn[hidden]{display:none!important}
+#fsBtn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+#fsBtn svg{width:20px;height:20px}
+#fsBtn .out{display:none}
+#fsBtn[aria-pressed=true] .in{display:none}
+#fsBtn[aria-pressed=true] .out{display:inline}
 #turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
 body.portrait #turn{display:block}
 @media (prefers-reduced-motion: reduce){#start,#hint,#sub,#prompt{transition:none}}
@@ -55,6 +63,9 @@ body.portrait #turn{display:block}
 <body>
 <div id="stage"></div>
 <div id="fps">fps –</div>
+<button id="fsBtn" type="button" aria-label="전체화면" aria-pressed="false" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="in"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></g><g class="out"><path d="M9 4v5H4"/><path d="M15 4v5h5"/><path d="M9 20v-5H4"/><path d="M15 20v-5h5"/></g></svg>
+</button>
 <p id="turn">가로로 돌리면 더 넓게 보여요</p>
 <p id="hint">랜턴은 바람에 꺼지기도 하고, 기름이 떨어지면 꺼져요. 다시 켜려면 모닥불로 가세요</p>
 <p id="prompt" aria-live="polite"></p>

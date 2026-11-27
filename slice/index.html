@@ -6,14 +6,14 @@
 <title>Night Herd · 첫 번째 슬라이스</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&family=Nanum+Pen+Script&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet">
 <style>
 /* VOICE: hushed, cold, a cowboy alone with his herd at night
-   IDEA: count the herd by the light of the lantern in your own gloved hand; the only paper is a cattle ledger
-   PICTURE: the live 3D night fills the screen; the hand and lantern lower right, the ledger lower left
-   COLOUR and TYPE: bone white on black, one warm paper, warm flame light; Nanum Myeongjo, Nanum Pen Script for handwriting
-   LAYOUT: full-bleed stage, subtitles low centre, ledger bottom-left, buttons bottom-right on phones */
-:root{color-scheme:dark;--bg:#050506;--ink:#e6e1d6;--dim:rgba(230,225,214,.62);--paper:#e4d9bf;--paperInk:#2a2118}
+   IDEA: count the herd by the light of the lantern in your own gloved hand
+   PICTURE: the live 3D night fills the screen; the hand and lantern lower right
+   COLOUR and TYPE: bone white on black, warm flame light; Nanum Myeongjo
+   LAYOUT: full-bleed stage, subtitles low centre, fullscreen top-left, buttons bottom-right on phones */
+:root{color-scheme:dark;--bg:#050506;--ink:#e6e1d6;--dim:rgba(230,225,214,.62)}
 :root[data-theme=light],:root[data-theme=dark]{color-scheme:dark}
 *{box-sizing:border-box;min-width:0}
 html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font:16px/1.5 "Nanum Myeongjo",serif;-webkit-user-select:none;user-select:none}
@@ -38,11 +38,6 @@ body.playing #hint.gone{opacity:0}
 #sub{bottom:max(92px,14vh);font-size:clamp(18px,2.6vw,24px)}
 #prompt{bottom:max(140px,22vh);font-size:16px;letter-spacing:.02em}
 #sub.show,#prompt.show{opacity:1}
-#ledger{position:fixed;left:max(16px,3vw);bottom:max(16px,3vh);width:clamp(170px,22vw,230px);transform:translateY(130%) rotate(-3deg);transition:transform .7s cubic-bezier(.2,.8,.2,1);pointer-events:none;z-index:2}
-#ledger.open{transform:translateY(0) rotate(-3deg)}
-.page{background:var(--paper);background-image:repeating-linear-gradient(180deg,transparent 0 27px,rgba(80,60,40,.18) 27px 28px),radial-gradient(120% 90% at 30% 20%,rgba(255,255,255,.25),rgba(120,90,50,.25));color:var(--paperInk);padding:14px 18px 18px;border-radius:3px;box-shadow:0 10px 30px rgba(0,0,0,.6),inset 0 0 22px rgba(90,60,30,.35)}
-.page .lh{margin:0 0 4px;font:400 26px/1.1 "Nanum Pen Script",cursive;opacity:.75}
-.page .lw{margin:0;font:400 34px/1.15 "Nanum Pen Script",cursive}
 .pad{position:fixed;right:max(16px,3vw);bottom:max(16px,3vh);display:none;flex-direction:column;align-items:flex-end;gap:10px;z-index:3}
 body.playing.touch .pad{display:flex}
 .pad .btn{display:flex;align-items:center;gap:8px}
@@ -54,23 +49,30 @@ body.playing.touch .pad{display:flex}
 #resume.show{display:block}
 #end{position:fixed;inset:0;display:grid;place-items:center;background:#000;opacity:0;pointer-events:none;transition:opacity 1.4s;z-index:6}
 #end.show{opacity:1;pointer-events:auto}
+#fsBtn{position:fixed;top:8px;left:10px;width:44px;height:44px;display:none;place-items:center;padding:0;border:1px solid rgba(230,225,214,.35);border-radius:10px;background:rgba(5,5,6,.45);color:var(--ink);cursor:pointer;z-index:4}
+body.playing #fsBtn{display:grid}
+#fsBtn[hidden]{display:none!important}
+#fsBtn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+#fsBtn svg{width:20px;height:20px}
+#fsBtn .out{display:none}
+#fsBtn[aria-pressed=true] .in{display:none}
+#fsBtn[aria-pressed=true] .out{display:inline}
 #turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
 body.portrait #turn{display:block}
-@media (prefers-reduced-motion: reduce){#start,#hint,#sub,#prompt,#ledger,#end{transition:none}}
+@media (prefers-reduced-motion: reduce){#start,#hint,#sub,#prompt,#end{transition:none}}
 </style>
 </head>
 <body>
 <div id="stage"></div>
 <div id="fps">fps –</div>
+<button id="fsBtn" type="button" aria-label="전체화면" aria-pressed="false" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="in"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></g><g class="out"><path d="M9 4v5H4"/><path d="M15 4v5h5"/><path d="M9 20v-5H4"/><path d="M15 20v-5h5"/></g></svg>
+</button>
 <p id="turn">가로로 돌리면 더 넓게 보여요</p>
-<p id="hint">장부를 펴고, 랜턴 빛이 닿는 소를 세어 보세요. 랜턴이 꺼지면 모닥불에서 다시 켜요</p>
+<p id="hint">랜턴 빛이 닿은 소를 바라보면 세어져요. 랜턴이 꺼지면 모닥불에서 다시 켜요</p>
 <p id="prompt" aria-live="polite"></p>
 <p id="sub" aria-live="polite"></p>
-<div id="ledger" aria-hidden="true"><div class="page"><p class="lh">장부</p><p class="lw">소 &mdash; 10마리</p></div></div>
 <div class="pad">
-  <button id="ledgerBtn" class="btn" type="button" aria-pressed="false">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z"/><path d="M5 17a3 3 0 0 1 3-3h11"/><path d="M9 8h6"/></svg><span>장부 펴기</span>
-  </button>
   <button id="raiseBtn" class="btn" type="button" aria-label="랜턴 들기 (누르고 있기)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg><span>들기</span>
   </button>

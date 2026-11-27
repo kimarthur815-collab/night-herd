@@ -1,6 +1,6 @@
-// Night Herd — the night at the herd. One source, two builds (WITH_LEDGER is set by esbuild --define):
-//   WITH_LEDGER=true  → first slice "밤 한 번": open the ledger and count the herd by the light of the lantern you hold
-//   WITH_LEDGER=false → lantern slice: the held lantern on its own
+// Night Herd — the night at the herd. One source, two builds (WITH_COUNTING is set by esbuild --define):
+//   WITH_COUNTING=true  → first slice "밤 한 번": count the herd by looking at each cow in the light of the lantern you hold
+//   WITH_COUNTING=false → lantern slice: the held lantern on its own
 // The lantern: walk, raise it, let it go out (by hand, wind or empty oil), relight it only at the campfire.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -40,14 +40,14 @@ const HERD = [
 ];
 const OIL_TIME = 150; // seconds of burn on a full fount
 const RELIGHT_DIST = 1.7;
-const LEDGER_COUNT = 10; // what the ledger says; the herd really has 11
+const EXPECTED_COUNT = 10; // the herd is supposed to be ten; it really has eleven
 const NUM = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여덟', '아홉', '열', '열하나', '열둘', '열셋'];
 
 // ---------------- renderer ----------------
 const ui = {
   start: $('start'), startBtn: $('startBtn'), loadTxt: $('loadTxt'), sub: $('sub'), joy: $('joy'), knob: $('knob'),
   fps: $('fps'), hint: $('hint'), resume: $('resume'), prompt: $('prompt'), lampBtn: $('lampBtn'), raiseBtn: $('raiseBtn'),
-  ledger: $('ledger'), ledgerBtn: $('ledgerBtn'), end: $('end'), again: $('again'),
+  end: $('end'), again: $('again'), fsBtn: $('fsBtn'),
 };
 let renderer;
 try {
@@ -933,7 +933,6 @@ const endPointer = (e) => {
 canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
 addEventListener('keydown', (e) => {
   if (!started) return;
-  if (e.code === 'KeyE') { if (!e.repeat) toggleLedger(); return; }
   if (e.code === 'KeyF') { if (!e.repeat) lampAction(); return; }
   if (e.code === 'Space') { raiseKey = true; e.preventDefault(); return; }
   keys.add(e.code);
@@ -1080,19 +1079,9 @@ document.addEventListener('mousedown', (e) => { if (e.button === 2 && started) r
 document.addEventListener('mouseup', (e) => { if (e.button === 2) raiseMouse = false; });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
-// ---------------- ledger, counting, ending (first slice only) ----------------
-let ledgerOpen = false, countT = 0, count = 0, revealT = -1, revealStart = 0;
-function toggleLedger(force) {
-  if (!WITH_LEDGER || ended || revealT >= 0) return;
-  ledgerOpen = typeof force === 'boolean' ? force : !ledgerOpen;
-  ui.ledger.classList.toggle('open', ledgerOpen);
-  ui.ledgerBtn.setAttribute('aria-pressed', String(ledgerOpen));
-  ui.ledgerBtn.querySelector('span').textContent = ledgerOpen ? '장부 덮기' : '장부 펴기';
-}
-if (WITH_LEDGER) {
-  ui.ledgerBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleLedger(); });
-  ui.again.addEventListener('click', () => location.reload());
-}
+// ---------------- counting and the ending (first slice only) ----------------
+let countT = 0, count = 0, revealT = -1, revealStart = 0, countReadyAt = Infinity; // counting opens after the opening line
+if (WITH_COUNTING) ui.again.addEventListener('click', () => location.reload());
 const rayO = new THREE.Vector3(), rayD = new THREE.Vector3(), tmpA = new THREE.Vector3(), tmpB = new THREE.Vector3(), aimTmp = new THREE.Vector3(), aimV = new THREE.Vector3();
 function cowVisibleFrom(c, pt) {
   // occlusion by other cows' bodies (spheres)
@@ -1109,7 +1098,7 @@ function cowVisibleFrom(c, pt) {
   }
   return true;
 }
-// a cow is counted once you have looked straight at it for a moment while the lantern's light reaches it;
+// no ledger: a cow is counted once you have looked straight at it for a moment while the lantern's light reaches it;
 // in the dark nothing can be counted, and the number counted so far is kept
 const COUNT_LIGHT = 0.3;
 function lanternLightAt(pt) {
@@ -1117,23 +1106,27 @@ function lanternLightAt(pt) {
   return lanternLight.intensity / Math.pow(Math.sqrt(d * d + 0.81), 1.4);
 }
 function countStep(dt) {
-  if (!ledgerOpen || revealT >= 0) return;
+  if (revealT >= 0 || performance.now() < countReadyAt) return;
   rayO.copy(camera.position); rayD.copy(fwd);
-  for (const c of cows) {
+  // one cow at a time: the uncounted, lit, unblocked cow nearest the middle of your view
+  let best = null, bestAng = 0.15;
+  if (lamp.level > 0.05) for (const c of cows) {
     if (c.counted) continue;
-    let lit = false;
-    if (lamp.level > 0.05) for (const lp of c.aimPoints) {
+    for (const lp of c.aimPoints) {
       const pt = c.mesh.localToWorld(aimTmp.copy(lp));
       aimV.copy(pt).sub(rayO); const dist = aimV.length();
       if (dist > 18) continue;
       const ang = Math.acos(clamp(aimV.dot(rayD) / dist, -1, 1));
-      if (ang < 0.2 && lanternLightAt(pt) > COUNT_LIGHT && cowVisibleFrom(c, pt)) { lit = true; break; }
+      if (ang < bestAng && lanternLightAt(pt) > COUNT_LIGHT && cowVisibleFrom(c, pt)) { best = c; bestAng = ang; }
     }
-    c.lit = lit ? c.lit + dt : Math.max(0, c.lit - dt * 2);
-    if (c.lit > 0.7) {
+  }
+  for (const c of cows) {
+    if (c.counted) continue;
+    c.lit = c === best ? c.lit + dt : Math.max(0, c.lit - dt * 2);
+    if (c.lit > 0.8) {
       c.counted = true; count++;
-      if (count < LEDGER_COUNT) say(`${NUM[count - 1]}…`, 2.4);
-      else if (count === LEDGER_COUNT) say('열… 다 있네.', 2.8);
+      if (count < EXPECTED_COUNT) say(`${NUM[count - 1]}…`, 2.4);
+      else if (count === EXPECTED_COUNT) say('열… 다 있네.', 2.8);
       else { say(`…${NUM[count - 1]}.`, 3.6); startReveal(); }
     }
   }
@@ -1325,9 +1318,10 @@ function frame(now) {
   finalPass.uniforms.uExp.value = lerp(0.26, nightExp, n) * adapt;
   finalPass.uniforms.uDesat.value = n * 0.75 * smooth(clamp((nightExp - 0.42) / 0.48, 0, 1));
   scene.fog.color.copy(DAY.fogC).lerp(NIGHT.fogC, n);
-  // the counting look follows the ledger
-  if (WITH_LEDGER) {
-    countT = approach(countT, ledgerOpen || revealT >= 0 ? 1 : 0, dt / (ledgerOpen ? 3.0 : 1.5));
+  // the counting look grows as you count
+  if (WITH_COUNTING) {
+    // the further you count, the more the world drains to grey and low resolution
+    countT = damp(countT, revealT >= 0 ? 1 : 0.9 * Math.min(1, count / EXPECTED_COUNT), 1.2, dt);
     finalPass.uniforms.uCount.value = countT; kuwaPass.uniforms.uCount.value = countT;
     mist.strength = 0.025 + 0.02 * countT;
   }
@@ -1340,7 +1334,7 @@ function frame(now) {
   finalPass.uniforms.uSeed.value = (now * 0.061) % 997;
 
   for (const c of cows) cowStep(c, dt, time);
-  if (WITH_LEDGER) { countStep(dt); revealStep(); }
+  if (WITH_COUNTING) { countStep(dt); revealStep(); }
   sound.update(camera.position, fwd, cows, time);
   updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -1384,7 +1378,7 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { la
     renderer.compile(scene, camera);
     renderer.compile(vmScene, vmCamera);
     ui.loadTxt.textContent = TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
-      : WITH_LEDGER ? 'WASD 걷기 · 마우스 둘러보기 · E 장부 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
+      : WITH_COUNTING ? 'WASD 걷기 · 마우스 둘러보기 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
       : 'WASD 걷기 · 마우스 둘러보기 · 스페이스/오른쪽 클릭 랜턴 들기 · F 끄기와 불 붙이기';
     ui.startBtn.disabled = false; ui.startBtn.textContent = '시작';
     window.__ready = true;
@@ -1395,22 +1389,46 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { la
     ui.loadTxt.textContent = '불러오지 못했어요. 새로고침해 주세요.';
   }
 })();
+// ---------------- fullscreen ----------------
+const FS_OK = !!(document.fullscreenEnabled || document.webkitFullscreenEnabled);
+const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+function enterFullscreen() {
+  if (!FS_OK || fsElement()) return;
+  const el = document.documentElement;
+  const lockLandscape = () => { try { if (TOUCH && screen.orientation && screen.orientation.lock) screen.orientation.lock('landscape').catch(() => {}); } catch {} };
+  try {
+    const r = (el.requestFullscreen || el.webkitRequestFullscreen).call(el, { navigationUI: 'hide' });
+    if (r && r.then) r.then(lockLandscape).catch(() => {}); else lockLandscape();
+  } catch {}
+}
+function toggleFullscreen() {
+  if (!fsElement()) { enterFullscreen(); return; }
+  try { (document.exitFullscreen || document.webkitExitFullscreen).call(document); } catch {}
+}
+if (ui.fsBtn) {
+  ui.fsBtn.hidden = !FS_OK;
+  ui.fsBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleFullscreen(); });
+  const syncFs = () => ui.fsBtn.setAttribute('aria-pressed', String(!!fsElement()));
+  document.addEventListener('fullscreenchange', syncFs); document.addEventListener('webkitfullscreenchange', syncFs);
+}
+
 ui.startBtn.addEventListener('click', () => {
   if (started) return;
   started = true;
   ui.start.classList.add('gone');
   document.body.classList.add('playing');
+  enterFullscreen();
   try { sound.init(); } catch (e) { console.warn('sound', e); }
   tryLock();
   setTimeout(() => ui.hint.classList.add('gone'), 9000);
+  if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
 });
 ui.resume.addEventListener('click', () => tryLock());
 
 if (DEBUG) {
   window.__dbg = {
-    state: () => ({ mode: lamp.mode, level: lamp.level, oil: lamp.oil, nightT, raiseT, count, ledgerOpen, countT, revealT, ended, pos: player.pos.toArray() }),
-    openLedger: () => toggleLedger(true),
-    countAll: () => { for (const c of cows) c.lit = 1; },
+    state: () => ({ mode: lamp.mode, level: lamp.level, oil: lamp.oil, nightT, raiseT, count, countT, revealT, ended, sub: ui.sub.textContent, pos: player.pos.toArray() }),
+    countAll: () => { countReadyAt = 0; for (const c of cows) c.lit = 2; },
     lightAt: (i) => lanternLightAt(cows[i].mesh.localToWorld(new THREE.Vector3(0, 1, 0))),
     goto: (x, z, yaw, pitch) => { player.pos.set(x, 0, z); player.yaw = yaw; player.pitch = pitch ?? 0; },
     walk: (code, ms) => { keys.add(code); setTimeout(() => keys.delete(code), ms); },

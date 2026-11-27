@@ -1,4 +1,4 @@
-node_modules/
+node_modules
 # look-dev bakes and preview builds (regenerate with gen.mjs / gen-preview.mjs)
 /cows/
 /preview/
