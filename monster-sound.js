@@ -232,8 +232,18 @@ export function makeMonsterSound(opt = {}) {
       src.start(u, 0, len + 0.01);
     });
   }
+  // the roars chosen from recordings (사용자 2026-11-28: ③=후보 03, ④=05, ⑤=07, played as heard, no taps):
+  // once a recording is loaded for a kind, the pounce plays it straight instead of the synthesized roar
+  const rec = {}; let recGain = 1.5; // as loud as the synthesized roar was, nothing squashed
+  async function useFile(kind, url) {
+    if (!ctx() || rec[kind]) return;
+    rec[kind] = 'pending';
+    try { const ab = await (await fetch(url)).arrayBuffer(); rec[kind] = await new Promise((ok, no) => a.decodeAudioData(ab, ok, no)); } catch (e) { rec[kind] = null; }
+  }
   function pounce(kind) {
     if (!ready()) return;
+    const r = rec[kind];
+    if (r && r !== 'pending') { const s = a.createBufferSource(), g = a.createGain(); s.buffer = r; g.gain.value = recGain; s.connect(g).connect(out); s.start(a.currentTime + 0.005); return; }
     const t = a.currentTime + 0.005, buf = bufs[kind];
     if (buf && buf !== 'pending') stutter(t, buf);
     else { roarRaw(kind, t); prepare(kind); }
@@ -346,7 +356,7 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    sting, setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
+    sting, useFile, setRecGain(g) { recGain = g; }, setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
     ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, scream, roarRaw, prepare, useBuffer, stop: () => a && stopLoop(),
   };
 }

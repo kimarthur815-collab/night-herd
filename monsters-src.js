@@ -7,7 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { makeMonsterSound, POUNCE_KINDS } from './monster-sound.js';
+import { makeMonsterSound } from './monster-sound.js';
 
 const INFO = {
   m3: {
@@ -27,6 +27,7 @@ const INFO = {
   },
 };
 const ORDER = ['m3', 'm4', 'm5'];
+const ROAR_FILES = { m3: '후보 03 (나즈굴 비명 +5반음)', m4: '후보 05 (두 목소리: 괴물 비명 +5, 나즈굴 +9)', m5: '후보 07 (나즈굴 +8 위에 낮은 비명 −3)' };
 const $ = (id) => document.getElementById(id);
 
 // ---------------- renderer, scene ----------------
@@ -600,8 +601,8 @@ async function setMonster(id) {
   for (const b of document.querySelectorAll('#mons button')) b.classList.toggle('on', b.dataset.v === id);
   const info = INFO[id];
   $('tag').textContent = info.tag; $('title').textContent = info.title;
-  $('pts').innerHTML = [...info.pts, `포효: ${POUNCE_KINDS[info.roar]}`].map((p) => `<li>${p}</li>`).join('');
-  pounceKind = info.roar; snd.prepare(info.roar); // the stuttered roar is cut from one rendered ahead
+  $('pts').innerHTML = [...info.pts, `포효: ${ROAR_FILES[id]}`].map((p) => `<li>${p}</li>`).join('');
+  pounceKind = info.roar; snd.prepare(info.roar); snd.useFile(info.roar, `../sounds/roar-${id}.mp3`); // the chosen recording (사용자: ③=03, ④=05, ⑤=07)
   const M = await loadMonster(id);
   if (cur) { scene.remove(cur.root); cur.root.position.set(0, 0, 0); cur.root.quaternion.identity(); }
   $('fade').style.opacity = 0; snd.restore();

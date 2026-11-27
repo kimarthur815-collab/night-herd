@@ -2556,7 +2556,7 @@ ui.startBtn.addEventListener('click', () => {
   if (ui.hint) setTimeout(() => ui.hint.classList.add('gone'), 9000);
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
   if (NIGHT_SCENE) {
-    if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); if (monster) msnd.prepare(MONSTERS[monster.mon.form].roar); }
+    if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); if (monster) msnd.useFile(MONSTERS[monster.mon.form].roar, `../sounds/roar-${monster.mon.form}.mp3`); } // the chosen recording (사용자: ③=03, ④=05, ⑤=07)
     history.pushState({ nh: 1 }, ''); // so that back pauses instead of leaving
     setTimeout(() => say(NL.lines.open, 3.6), 1200);
     night.readyAt = performance.now() + 4800; night.lastAct = night.readyAt;
