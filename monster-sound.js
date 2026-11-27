@@ -208,11 +208,11 @@ export function makeMonsterSound(opt = {}) {
   // the roar as if replayed in quick taps: its first moments again and again, the taps slowing, the last one let ring
   const bufs = {};
   async function prepare(kind) {
-    if (opt.context || !ctx() || bufs[kind]) return;
+    if (opt.offline || !ctx() || bufs[kind]) return; // (a live context given by the game prepares too; only the offline renderer does not)
     bufs[kind] = 'pending';
     try {
       const sr = a.sampleRate, off = new OfflineAudioContext(1, Math.ceil(sr * 2.2), sr);
-      makeMonsterSound({ context: off }).roarRaw(kind, 0.002);
+      makeMonsterSound({ context: off, offline: true }).roarRaw(kind, 0.002);
       bufs[kind] = await off.startRendering();
     } catch (e) { bufs[kind] = null; }
   }
@@ -324,6 +324,7 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
+    setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
     ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, scream, roarRaw, prepare, useBuffer, stop: () => a && stopLoop(),
   };
 }
