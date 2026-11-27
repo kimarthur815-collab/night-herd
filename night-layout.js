@@ -37,6 +37,16 @@ export const NL = {
   // 임시: phone gestures: a swipe counts after this share of the screen's short side, and when it goes this many times more one
   // way than the other; a tap that misses every cow takes the nearest one within this share of the short side
   swipe: { far: 0.08, ratio: 1.2, reach: 0.07 },
+  // the one too many: a thing that is not a cow, standing among them in one of the places above (anywhere, front row or up the rise)
+  monster: {
+    clues: [1, 2, 4, 7], // 기획서: 첫날 밤은 ①②④⑦ 중 하나 (이 단계에서는 한 밤에 하나를 골라요). 시험용: 주소 끝에 ?clue=4
+    high: 0.3, // 임시 ① 눈이 너무 높음: 소 눈 자리보다 이만큼 위 (m)
+    wide: 0.25, // 임시 ② 눈 사이가 넓음: 가운데에서 한쪽 눈까지 (보통 소는 약 0.12 m)
+    eye: 0.12, // 보통 소의 가운데에서 한쪽 눈까지 (소 모델과 같음)
+    third: 0.07, // 임시 ⑦ 눈이 셋: 세 번째 눈은 두 눈 가운데에서 이만큼 위
+    glint: 0.07, // 임시: 괴물 눈빛 하나의 크기 (m)
+    anyRow: false, // 임시: 첫날 밤은 쉬우니 괴물은 첫 줄에만 선다 (뒤 줄은 앞 소에 가려 단서가 안 보일 때가 많아요)
+  },
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")
   endWait: 3.5, // 임시: seconds after the last place is counted before the night fades out (stage 1 ends there)
   lines: { // the cowboy's lines; the brackets are the how-to

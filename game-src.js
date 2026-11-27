@@ -136,7 +136,7 @@ function cowMaterial(coat, face, phase) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0, sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color(coat * 0.6, coat * 0.56, coat * 0.48) });
   const own = {
     uBody: { value: new THREE.Color(coat, coat * 0.93, coat * 0.8) }, uFace: { value: new THREE.Color(face, face * 0.93, face * 0.8) },
-    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 }, uGait: { value: new THREE.Vector4() },
+    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 }, uGait: { value: new THREE.Vector4() }, uEyeOff: { value: 0 },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
@@ -158,7 +158,7 @@ function cowMaterial(coat, face, phase) {
         ${COW_RIG_POS}`)
       .replace('#include <fog_vertex>', '#include <fog_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform float uEyeFall; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
+      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform float uEyeFall; uniform float uEyeOff; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         { float pn = vnoise3(vObj*2.7)*0.5+0.5; float pn2 = vnoise3(vObj*9.0);
           float fm = smoothstep(0.2, 0.8, vExt.z + 0.25*vnoise3(vObj*14.0));
@@ -189,9 +189,9 @@ function cowMaterial(coat, face, phase) {
         #endif`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
         { float dl = length(vWP - uLanternPos); float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
-          totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), uEyeFall) + uEyeSelf * pow(fc, 4.0)); }`);
+          totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), uEyeFall) + uEyeSelf * pow(fc, 4.0)) * (1.0 - uEyeOff); }`);
   };
-  m.customProgramCacheKey = () => 'cow-rig-v3';
+  m.customProgramCacheKey = () => 'cow-rig-v4';
   return m;
 }
 
@@ -1530,7 +1530,7 @@ function makeNightHerd(geos) {
     mesh.scale.setScalar(s); scene.add(mesh); mesh.updateMatrixWorld(true);
     const blockers = [0.55, 0.0, -0.6].map((lz) => { const p = new THREE.Vector3(0, 0, lz * 0.92).applyMatrix4(mesh.matrixWorld); return { x: p.x, z: p.z, r: 0.37 * s }; });
     cows.push({
-      mesh, s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(), station: si, y0: y, eyeWorld: new THREE.Vector3(), noseWorld: new THREE.Vector3(),
+      mesh, s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(), station: si, y0: y, back, eyeWorld: new THREE.Vector3(), noseWorld: new THREE.Vector3(),
       aimPoints: [], heading: yaw, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
       stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null, startle: 0, dead: false,
       ai: { t: rand(0, 3), yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, flick: 0, graze: false },
@@ -1557,6 +1557,8 @@ function nightTap(nx, ny, finger) {
   tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
   let best = Infinity, hit = null;
   for (const c of cows) {
+    if (c.mon) for (const p of c.mon.eyes) if (p.visible) { const t = raySphere(tapO, tapD, p.position, 0.12); if (t < best) { best = t; hit = c; } }
+    if (c.mon && c.mon.clue === 4) continue; // only eyes: nothing else to tap
     // the barrel (belly to back, about 0.6 to 1.35 m) and the head (muzzle up to the poll); close to the real outline, so a head
     // showing over the back of a cow in front can be tapped
     for (const b of c.blockers) { const t = raySphere(tapO, tapD, tapC.set(b.x, c.y0 + 0.95 * c.s, b.z), 0.38 * c.s); if (t < best) { best = t; hit = c; } }
@@ -1573,11 +1575,43 @@ const _np = new THREE.Vector3();
 function nearOnScreen(nx, ny) {
   const W = innerWidth, H = innerHeight, reach = Math.min(W, H) * NL.swipe.reach;
   let best = reach, hit = null;
-  for (const c of cows) for (const p of [c.eyeWorld, c.noseWorld, _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) {
+  for (const c of cows) for (const p of c.mon ? (c.mon.clue === 4 ? c.mon.eyes.map((e) => e.position) : [...c.mon.eyes.filter((e) => e.visible).map((e) => e.position), _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) : [c.eyeWorld, c.noseWorld, _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) {
     const v = tapC.copy(p).project(camera); if (v.z > 1) continue;
     const d = Math.hypot((v.x - nx) * W / 2, (v.y - ny) * H / 2); if (d < best) { best = d; hit = c; }
   }
   return hit;
+}
+// ---------------- the one too many (stage 2): a thing among the cows, given away by one of the clues ----------------
+// ① eyes too high, ② eyes too far apart, ④ eyes with no body, ⑦ three eyes. It takes one cow's place; its own cow eyes are
+// put out and its eyes are drawn as glints that catch the lantern like a cow's do (and shine in the dark like theirs).
+let monster = null;
+const glintTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)'); g.addColorStop(0.5, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
+function makeMonster() {
+  const asked = +new URLSearchParams(location.search).get('clue'), M = NL.monster;
+  const clue = M.clues.includes(asked) ? asked : M.clues[Math.floor(Math.random() * M.clues.length)];
+  const can = cows.filter((k) => NL.monster.anyRow || !k.back), c = can[Math.floor(Math.random() * can.length)];
+  c.mesh.material.userData.own.uEyeOff.value = 1;
+  if (clue === 4) c.mesh.visible = false; // no body
+  const eyes = [0, 1, 2].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
+    sp.scale.setScalar(M.glint); scene.add(sp); return sp; });
+  eyes[2].visible = clue === 7;
+  c.mon = { clue, eyes }; monster = c;
+}
+const _mr = new THREE.Vector3(), _mu = new THREE.Vector3(0, 1, 0), _mf = new THREE.Vector3();
+function monsterStep() {
+  if (!monster) return;
+  const c = monster, m = c.mon, M = NL.monster, u = c.mesh.material.userData.own.uPose.value;
+  const yaw = c.mesh.rotation.y + u.x + u.z; _mr.set(Math.cos(yaw), 0, -Math.sin(yaw)); // across the head
+  const half = m.clue === 2 ? M.wide : M.eye, up = m.clue === 1 ? M.high : 0;
+  m.eyes[0].position.copy(c.eyeWorld).addScaledVector(_mr, -half).addScaledVector(_mu, up);
+  m.eyes[1].position.copy(c.eyeWorld).addScaledVector(_mr, half).addScaledVector(_mu, up);
+  m.eyes[2].position.copy(c.eyeWorld).addScaledVector(_mu, M.third);
+  for (const e of m.eyes) e.position.add(_mf.copy(camera.position).sub(e.position).setLength(0.1)); // just in front of the face, never buried in it
+  // as bright as a cow's eye in the same light: the lantern's reach, or eyes used to the dark
+  const d = c.eyeWorld.distanceTo(lanternLight.position), b = 0.1 * (U.uEyeGain.value / Math.pow(Math.max(d, 1.3), U.uEyeFall.value) + U.uEyeSelf.value);
+  for (const e of m.eyes) e.material.color.setScalar(b);
 }
 function nextStation() {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
@@ -1884,7 +1918,7 @@ function frame(now) {
   if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
-  if (NIGHT_SCENE) nightStep(dt);
+  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); }
   sound.update(camera.position, fwd, cows, time);
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -2178,7 +2212,7 @@ function frameWalk(now) {
     for (const f of brushFields) scene.add(f.group);
     saguaroField.setPixel(camera, finalPass.uniforms.uRes.value.y);
     saguaroField.update(player.pos.x, player.pos.z, camera);
-    if (NIGHT_SCENE) makeNightHerd(geos);
+    if (NIGHT_SCENE) { makeNightHerd(geos); makeMonster(); }
     else HERD.forEach((h, i) => {
       const toCamp = Math.atan2(0 - h.x, 0.5 - h.z);
       const mesh = new THREE.Mesh(geos[h.v], cowMaterial(h.coat, h.face ?? h.coat, i * 1.7));
@@ -2316,6 +2350,9 @@ if (DEBUG) {
     relight: () => lampAction(),
     night: () => { nightT = 1; },
     // the night scene
+    station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
+    monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+    monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
       cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), counted: c.counted })) }),
     tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },
