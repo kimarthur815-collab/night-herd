@@ -201,6 +201,105 @@ function monsterMaterial(info) {
   return { mat: m, depth, own };
 }
 
+
+// ---------------- the row of cows, as in the game: side by side, facing you, the monster in among them ----------------
+// The cows are the game's own (lighter copies, gen-cows-lite.mjs). Their eyes catch the light like the monster's.
+const COW_SKIN = `
+attribute vec4 aMat; attribute vec4 aExt4; attribute vec4 aRig;
+uniform float uTime, uPhase, uNod, uTurn;
+varying vec4 vCMat; varying float vCEye; varying vec3 vCExt; varying vec3 vCObj; varying vec3 vCWP;
+mat3 cRotX(float a) { float c = cos(a), s = sin(a); return mat3(1.0,0.0,0.0, 0.0,c,s, 0.0,-s,c); }
+mat3 cRotY(float a) { float c = cos(a), s = sin(a); return mat3(c,0.0,-s, 0.0,1.0,0.0, s,0.0,c); }`;
+function cowMaterial(coat, face, phase) {
+  const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 });
+  const own = { uBody: { value: new THREE.Color(coat, coat * 0.93, coat * 0.8) }, uFace: { value: new THREE.Color(face, face * 0.93, face * 0.8) }, uPhase: { value: phase }, uNod: { value: 0 }, uTurn: { value: 0 }, uLightP: lightP };
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, U, own);
+    const pose = `mat3 rN = cRotY(uTurn * aRig.x) * cRotX(uNod * 0.6 * aRig.x); mat3 rH = cRotX(uNod * 0.5 * aRig.y);
+      const vec3 N0 = vec3(0.0, 1.08, 0.58), H0 = vec3(0.0, 1.22, 1.03);`;
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>\n${COW_SKIN}`)
+      .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${pose}\nobjectNormal = rN * (rH * objectNormal);`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+        vCMat = aMat; vCEye = aExt4.x; vCExt = aExt4.yzw; vCObj = position;
+        { float br = sin(uTime * 1.3 + uPhase) * 0.5 + 0.5; float barrel = smoothstep(0.6, 0.85, position.y) * (1.0 - smoothstep(1.15, 1.32, position.y)) * (1.0 - smoothstep(0.5, 0.85, abs(position.z + 0.05)));
+          transformed += normal * barrel * br * 0.007 * (1.0 - aRig.x); }
+        transformed = H0 + rH * (transformed - H0); transformed = N0 + rN * (transformed - N0);`)
+      .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvCWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', `#include <common>
+        uniform float uIR; uniform vec3 uBody, uFace, uLightP; varying vec4 vCMat; varying float vCEye; varying vec3 vCExt; varying vec3 vCObj; varying vec3 vCWP;\n${NOISE}`)
+      .replace('#include <color_fragment>', `#include <color_fragment>
+        { vec3 p = vCObj; float pn = vnoise3(p * 2.7) * 0.5 + 0.5, hc = vnoise3(p * vec3(32.0, 22.0, 32.0)) * 0.6 + vnoise3(p * vec3(70.0, 45.0, 70.0)) * 0.4;
+          float fm = smoothstep(0.2, 0.8, vCExt.z + 0.25 * vnoise3(p * 14.0));
+          vec3 c = mix(uBody, uFace, fm) * (0.74 + 0.4 * pn) * (1.0 + 0.16 * hc);
+          c = mix(c, c * 0.45, vCExt.x * 0.8); c = mix(c, c * 0.5, vCExt.y * 0.8);
+          float mud = smoothstep(0.1, 0.6, vnoise3(p * vec3(6.0, 11.0, 6.0)) * 0.5 + 0.5) * (1.0 - smoothstep(0.55, 0.85, p.y));
+          c = mix(c, c * 0.5, mud * 0.55); c = mix(c, c * 0.3, vCMat.w * 0.85);
+          c = mix(c, vec3(0.2, 0.16, 0.16), vCMat.y); c = mix(c, vec3(0.03, 0.028, 0.026), vCMat.z);
+          c *= mix(1.0, vCMat.x, 0.55); c = mix(c, vec3(0.008), vCEye);
+          c = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11)) * 0.8 + 0.01), uIR);
+          diffuseColor.rgb = c; }`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.35, vCMat.y); roughnessFactor = mix(roughnessFactor, 0.08, vCEye);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        { float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0), dl = length(vCWP - uLightP);
+          totalEmissiveRadiance += vCEye * vec3(0.95, 1.0, 0.92) * mix(min(5.0, 14.0 * pow(fc, 4.0) / pow(max(dl, 1.3), 1.5)), 5.5 * pow(fc, 2.5), uIR); }`);
+  };
+  m.customProgramCacheKey = () => 'mon-page-cow-v1';
+  m.userData.own = own;
+  return m;
+}
+function parseCow(j, m) {
+  const raw = atob(j.data), u8 = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
+  const buf = u8.buffer, vc = m.vc, ic = m.ic; let o = 0;
+  const p16 = new Int16Array(buf, o, vc * 3); o += vc * 6; o += vc * 6; // positions, then head-local (unused here)
+  const idx = new Uint16Array(buf, o, ic); o += ic * 2;
+  const nrm = new Int8Array(buf, o, vc * 3); o += vc * 3;
+  const mat = new Uint8Array(buf, o, vc * 4); o += vc * 4;
+  const ext = new Uint8Array(buf, o, vc * 4); o += vc * 4;
+  const rig = new Uint8Array(buf, o, vc * 4);
+  const pos = new Float32Array(vc * 3); for (let i = 0; i < vc * 3; i++) pos[i] = p16[i] * m.ps;
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(new Int8Array(nrm), 3, true));
+  g.setAttribute('aMat', new THREE.BufferAttribute(new Uint8Array(mat), 4, true));
+  g.setAttribute('aExt4', new THREE.BufferAttribute(new Uint8Array(ext), 4, true));
+  g.setAttribute('aRig', new THREE.BufferAttribute(new Uint8Array(rig), 4, true));
+  g.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1));
+  g.computeBoundingSphere();
+  return g;
+}
+const lightP = { value: new THREE.Vector3() };
+const row = new THREE.Group(); scene.add(row);
+let cowGeos = null;
+const loadCows = (async () => {
+  const meta = await (await fetch('cows/cows.json')).json();
+  cowGeos = await Promise.all(meta.map(async (m) => parseCow(await (await fetch(m.file)).json(), m)));
+})();
+// cows side by side, a little ragged, the gap in the middle as wide as the monster needs
+function layoutRow(M) {
+  row.clear();
+  if (!cowGeos) return;
+  const b = M.meta.bounds, half = Math.max(-b[0][0], b[1][0]) + 0.4;
+  let seed = 11; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const coats = [0.82, 0.72, 0.7, 0.85, 0.62, 0.78, 0.66, 0.8];
+  for (let i = 0; i < 8; i++) {
+    const side = i % 2 ? 1 : -1, k = Math.floor(i / 2), x = side * (half + 0.35 + k * 1.15 + (r() - 0.5) * 0.15);
+    const mesh = new THREE.Mesh(cowGeos[i % cowGeos.length], cowMaterial(coats[i] * 0.55, Math.min(1, coats[i] * 0.55 + 0.25), r() * 6));
+    mesh.position.set(x, 0, (r() - 0.5) * 0.5 - 0.1); mesh.rotation.y = (r() - 0.5) * 0.4; mesh.scale.setScalar(0.95 + r() * 0.1);
+    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.userData.nod = { t: r() * 5, goal: 0, v: 0, turn: (r() - 0.5) * 0.3 };
+    row.add(mesh);
+  }
+}
+function animateRow(dt) {
+  for (const c of row.children) {
+    const n = c.userData.nod, own = c.material.userData.own;
+    n.t -= dt; if (n.t < 0) { n.t = 2 + Math.random() * 5; n.goal = (Math.random() - 0.3) * 0.25; n.turnGoal = (Math.random() - 0.5) * 0.35; }
+    n.v += (n.goal - n.v) * Math.min(1, dt * 1.5); n.turn += ((n.turnGoal ?? 0) - n.turn) * Math.min(1, dt * 1.2);
+    own.uNod.value = n.v; own.uTurn.value = n.turn;
+  }
+}
+
 // ---------------- loading ----------------
 function parse(j) {
   const raw = atob(j.data), u8 = new Uint8Array(raw.length);
@@ -238,21 +337,22 @@ async function loadMonster(id) {
   else own.uJawH.value.fromArray(meta.jawHinge);
   own.uNeckP.value.fromArray(meta.neck ? meta.neck.base : [0, 1.5, -0.05]);
   const root = new THREE.Group(); root.add(mesh);
+  meta.cams.full = { pos: [0.35, 1.65, 5.0], look: [0, 0.9 + 0.22 * meta.height, 0] }; // as in the game: standing in front of the row
   return (monsters[id] = { id, meta, info, mesh, root, own, st: newState() });
 }
 
 // ---------------- motion: breathing, a gaping jaw, twitches, and the pounce ----------------
-function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), eat: -1, scare: -1, fired: {}, camK: 0, shake: 0, breathPh: 0 }; }
+function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), eat: -1, scare: -1, fired: {}, shake: 0, breathPh: 0 }; }
 const rr = (a, b) => a + Math.random() * (b - a);
-const _fz = new THREE.Vector3(), _qa = new THREE.Quaternion();
+const _fz = new THREE.Vector3(), _hy = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const snd = makeMonsterSound();
 let pounceKind = 'growlRoar', scareKind = 'shake';
 const biteKind = 'gulp'; // chosen: ③ 꿀꺽 삼킴
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
 // the pounce, in seconds from the tap: it goes still and quiet, snaps round with a roar and lunges,
-// you are pulled into the open mouth, the jaws shut over the screen, the light through the teeth dies, black, and back
-const EAT = { snap: 0.45, lunge: 0.7, engulf: 1.0, shut: 1.13, dark0: 1.35, dark1: 2.6, reset: 3.1, back0: 3.6, back1: 4.5 };
+// its open mouth stops right in front of you, the jaws slam shut, and in that instant everything goes black; back after a while
+const EAT = { snap: 0.45, lunge: 0.72, shut: 1.02, black: 1.11, reset: 3.0, back0: 3.4, back1: 4.3 };
 const ease = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
 const easeIn = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * u; };
 const easeOut = (u) => { u = Math.min(1, Math.max(0, u)); return 1 - Math.pow(1 - u, 3); };
@@ -278,83 +378,76 @@ function animate(M, dt) {
   o.uNeck.value.set(A.neck[0] * Math.sin(t * 0.55), A.neck[1] * Math.sin(t * 0.4 + 1));
   o.uSway.value = A.sway;
   M.root.position.set(0, 0, 0); M.root.quaternion.identity();
-  s.camK = 0; s.shake = Math.max(0, s.shake - dt * 2.2);
-  let bite = 0, leak = 1, fade = 0;
+  s.shake = Math.max(0, s.shake - dt * 2.2);
+  let fade = 0;
   if (eating) {
     s.eat += dt;
     const once = (k, f) => { if (!s.fired[k] && E >= EAT[k]) { s.fired[k] = 1; f(); } };
     if (!s.fired.start) { s.fired.start = 1; snd.freeze(pounceKind); }
     once('snap', () => { snd.pounce(pounceKind); buzz(90); s.shake = 0.5; });
-    once('engulf', () => { s.shake = Math.max(s.shake, 0.7); });
-    once('shut', () => { snd.bite(biteKind); buzz([260, 120, 90]); s.shake = 1.2; });
+    once('black', () => { snd.bite(biteKind); buzz([260, 120, 90]); });
     once('back0', () => snd.restore());
-    const max = split ? 0.55 : 0.85;   // how far the jaw (or the split face) opens at the lunge
-    const H0 = _h0.fromArray(M.meta.headPivot);
-    const to = _to.copy(camera.position).sub(H0); const dist = to.length(); to.normalize();
-    const reach = Math.max(0, dist - 0.85), yawTo = Math.atan2(to.x, to.z);
-    let along = 0, turn = 0;
+    const max = split ? 0.6 : 0.95, H0 = _h0.fromArray(M.meta.headPivot);
+    faceTarget(M, 0.62, max);
+    let u = 0, turn = 0, push = 0;
     if (E < EAT.snap) { // dead still, watching you, the mouth easing shut
-      const u = ease(E / EAT.snap); jaw = jaw * (1 - u) + (split ? -0.18 : -0.2) * u;
-      o.uHeadRot.value.multiplyScalar(1 - u); o.uHeadRot.value.y -= 0.12 * u; turn = 0.15 * u;
+      const k = ease(E / EAT.snap); jaw = jaw * (1 - k) + (split ? -0.18 : -0.2) * k;
+      o.uHeadRot.value.multiplyScalar(1 - k); o.uHeadRot.value.y -= 0.12 * k; turn = 0.12 * k;
     } else if (E < EAT.lunge) { // snaps round and comes, mouth tearing open
-      const u = (E - EAT.snap) / (EAT.lunge - EAT.snap), e = easeOut(u);
-      turn = 0.15 + 0.85 * easeOut(u * 1.6); along = reach * e; jaw = -0.2 + (max + 0.2) * easeOut(u * 1.3);
-      o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - u), 0.06 * Math.sin(E * 47));
-    } else if (E < EAT.shut) { // you are in its mouth; it closes
-      const u = (E - EAT.lunge) / (EAT.engulf - EAT.lunge);
-      turn = 1; along = reach + 0.25 * ease(u);
-      s.camK = easeIn(Math.min(1, u));
-      jaw = max + 0.03 * Math.sin(E * 50);
-      if (E > EAT.engulf) { const v = (E - EAT.engulf) / (EAT.shut - EAT.engulf); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * easeIn(v); bite = easeIn(v); }
-      o.uHeadRot.value.set(0, 0, 0.05 * Math.sin(E * 33));
-    } else { // shut: the light through the teeth fades out, and the dark comes
-      turn = 1; along = reach + 0.25; s.camK = 1; jaw = -M.meta.jawOpen * (split ? 0.95 : 0.9); bite = 1;
-      leak = 1 - ease((E - EAT.shut) / (EAT.dark1 - EAT.shut - 0.3));
-      fade = ease((E - EAT.dark0) / (EAT.dark1 - EAT.dark0));
-      o.uHeadRot.value.set(0, 0, 0);
-      if (E >= EAT.reset) { turn = 0; along = 0; s.camK = 0; bite = 0; jaw = -0.12; fade = 1 - ease((E - EAT.back0) / (EAT.back1 - EAT.back0)); }
+      const k = (E - EAT.snap) / (EAT.lunge - EAT.snap);
+      u = easeOut(k); turn = easeOut(Math.min(1, k * 1.6)); jaw = -0.2 + (max + 0.2) * easeOut(k * 1.3);
+      o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - k), 0.06 * Math.sin(E * 47));
+    } else if (E < EAT.shut) { // the open mouth right at your face, quivering
+      u = 1; turn = 1; jaw = max + 0.04 * Math.sin(E * 50);
+      o.uHeadRot.value.set(0.03 * Math.sin(E * 41), 0.03 * Math.sin(E * 37), 0.05 * Math.sin(E * 33)); s.shake = Math.max(s.shake, 0.5);
+    } else if (E < EAT.black) { // the jaws slam shut
+      const k = easeIn((E - EAT.shut) / (EAT.black - EAT.shut));
+      u = 1; turn = 1; push = 0.04 * k; jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; o.uHeadRot.value.set(0, 0, 0);
+    } else { // black at once; the world comes back later
+      u = 1; turn = 1; push = 0.04; jaw = -M.meta.jawOpen * (split ? 0.95 : 0.9); fade = 1;
+      if (E >= EAT.reset) { u = 0; turn = 0; push = 0; jaw = -0.12; fade = 1 - ease((E - EAT.back0) / (EAT.back1 - EAT.back0)); }
       if (E >= EAT.back1) { s.eat = -1; s.fired = {}; fade = 0; }
     }
-    // aim the middle of the open mouth at you (not the nose), so you look down its throat as it comes
-    const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
-    _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
-    _qa.setFromUnitVectors(_fz, to);
-    M.root.quaternion.identity().slerp(_qa, turn);
-    const P = _p.copy(H0).addScaledVector(to, along);
+    const P = _p.copy(H0).lerp(_tgt, u).addScaledVector(_fwd, -push);
+    M.root.quaternion.identity().slerp(_qt, turn);
     M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
   }
   if (s.scare >= 0) { const r = scareStep(M, dt); if (r) { jaw = r.jaw; fade = r.fade; } }
   o.uJaw.value = jaw;
-  const dim = (1 - s.camK) * (1 - s.camK) * (s.scare >= 0 ? 0.3 : 1); // close up, the eyes must not wash out the face
+  // close up, the eyes must not wash out the face
+  const dHead = camera.position.distanceTo(_hp.fromArray(M.meta.headPivot).applyQuaternion(M.root.quaternion).add(M.root.position));
+  const dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
-  grade.uniforms.uBite.value = bite; grade.uniforms.uLeak.value = leak; grade.uniforms.uBiteH.value = split ? 1 : 0;
   $('fade').style.opacity = fade;
   snd.ambient(M.id, dt, { cross: s.breathCross && !eating && s.scare < 0 });
 }
 // ---------------- the jumpscare for a monster you missed: no wind-up, its face is just there ----------------
 // ① the face snaps in out of the dark and thrashes, ② it crosses the whole distance in an instant,
 // ③ it comes in from the edge of the screen. Then a hard cut to black, ears ringing, and back.
+function faceTarget(M, d, max) {
+  const split = !!M.meta.split;
+  camera.getWorldDirection(_fwd); _rgt.crossVectors(_fwd, camera.up).normalize();
+  // the face (not the skull's middle) stops a hand's breadth from you: long muzzles stop further out
+  _tgt.copy(camera.position).addScaledVector(_fwd, d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, 0.03);
+  const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
+  _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
+  _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
+}
 const SCARE = { shake: { appear: 0.12, travel: 0.0, d: 0.6 }, fast: { appear: 0.0, travel: 0.11, d: 0.68 }, side: { appear: 0.0, travel: 0.16, d: 0.64 } };
 const _fwd = new THREE.Vector3(), _rgt = new THREE.Vector3(), _tgt = new THREE.Vector3(), _st = new THREE.Vector3(), _qt = new THREE.Quaternion(), _qs = new THREE.Quaternion();
 function scareStep(M, dt) {
   const s = M.st, o = M.own, split = !!M.meta.split, k = s.scareKind, C = SCARE[k];
   s.scare += dt;
-  const E = s.scare, hit = C.appear + C.travel, cutT = hit + 0.8, back0 = cutT + 0.75, back1 = back0 + 0.8;
+  const E = s.scare, hit = C.appear + C.travel, shutT = hit + 0.72, cutT = shutT + 0.08, back0 = cutT + 0.75, back1 = back0 + 0.8;
   const once = (key, f) => { if (!s.fired[key]) { s.fired[key] = 1; f(); } };
   if (E >= C.appear) once('roar', () => { snd.freeze('none'); snd.pounce(pounceKind); buzz(450); });
-  if (E >= cutT) once('cut', () => { snd.cut(); buzz(0); });
+  if (E >= cutT) once('cut', () => { snd.snap(); snd.cut(); buzz(220); });
   if (E >= back0) once('back', () => snd.restore());
   if (E >= back1) { s.scare = -1; s.fired = {}; M.root.position.set(0, 0, 0); M.root.quaternion.identity(); return { jaw: -0.12, fade: 0 }; }
   if (E < C.appear) return { jaw: -0.12, fade: 1 };                   // ① a beat of darkness first
   if (E >= cutT) return { jaw: -0.12, fade: E < back0 ? 1 : 1 - ease((E - back0) / (back1 - back0)) }; // hard cut, then back
-  // where its face ends up: right in front of you, mouth open at you
-  camera.getWorldDirection(_fwd); _rgt.crossVectors(_fwd, camera.up).normalize();
   const H0 = _h0.fromArray(M.meta.headPivot), max = split ? 0.6 : 0.95;
-  // the face (not the skull's middle) stops a hand's breadth from you: long muzzles stop further out
-  _tgt.copy(camera.position).addScaledVector(_fwd, C.d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, 0.03);
-  const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
-  _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
-  _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
+  faceTarget(M, C.d, max);
   let u = C.travel > 0 ? easeOut((E - C.appear) / C.travel) : 1;
   if (k === 'fast') { _st.copy(H0); _qs.identity(); }                  // from where it stood
   else if (k === 'side') { _st.copy(camera.position).addScaledVector(_fwd, 1.0).addScaledVector(_rgt, -1.7 * (s.scareSide || 1)).addScaledVector(camera.up, -0.35); _qs.copy(_qt).multiply(_qa.setFromAxisAngle(_fz, 0.7 * (s.scareSide || 1))); }
@@ -368,33 +461,9 @@ function scareStep(M, dt) {
   if (u >= 1) o.uHeadRot.value.set((Math.random() - 0.5) * 0.7 * sh, (Math.random() - 0.5) * 0.4 * sh, (Math.random() - 0.5) * 0.9 * sh);
   else o.uHeadRot.value.set(0, 0, 0);
   s.shake = u >= 1 ? 1.4 * sh + 0.3 : 0.6;
+  if (E >= shutT) { const k = easeIn((E - shutT) / (cutT - shutT)); o.uHeadRot.value.multiplyScalar(1 - k); return { jaw: max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k, fade: 0 }; } // snap shut
   return { jaw: max * (u >= 1 ? 0.85 + 0.15 * Math.sin(ph * 0.55) : u), fade: 0 };
 }
-// where the throat is, in the world, for the moment you are inside the mouth
-const _m = new THREE.Vector3(), _a = new THREE.Vector3(), _hy = new THREE.Vector3(), _mat = new THREE.Matrix4(), _qm = new THREE.Quaternion();
-function headToWorld(M, l, out) {
-  const m = M.meta;
-  out.fromArray(m.headPivot).addScaledVector(_hx.fromArray(m.headX), l[0]).addScaledVector(_hy2.fromArray(m.headY), l[1]).addScaledVector(_hz.fromArray(m.headZ), l[2]);
-  return out.applyQuaternion(M.root.quaternion).add(M.root.position);
-}
-const _hx = new THREE.Vector3(), _hy2 = new THREE.Vector3(), _hz = new THREE.Vector3();
-function mouthPose(M) {
-  const m = M.meta, L = m.headL;
-  let loc, aim;
-  if (m.split) { loc = [0, -0.01, 0.42]; aim = [0, 0.005, 0.07]; } // between the halves, the third eye ahead
-  else {
-    const H = m.hingeLocal, th = m.jawOpen + M.own.uJaw.value, c = Math.cos(th), sn = Math.sin(th);
-    const dy = -0.095 - H[1], dz = 0.5 * L - H[2], J = [0, H[1] + dy * c - dz * sn, H[2] + dy * sn + dz * c];
-    const U = [0, -0.05, 0.5 * L], mid = [0, (U[1] + J[1]) / 2, (U[2] + J[2]) / 2];
-    aim = [0, H[1] + 0.01, H[2] - 0.03];
-    loc = [0, mid[1] + (mid[1] - aim[1]) * 0.25, mid[2] + (mid[2] - aim[2]) * 0.25];
-  }
-  headToWorld(M, loc, _m); headToWorld(M, aim, _a);
-  _hy.fromArray(m.headY).applyQuaternion(M.root.quaternion);
-  _mat.lookAt(_m, _a, _hy); _qm.setFromRotationMatrix(_mat);
-  return { pos: _m, quat: _qm };
-}
-
 // ---------------- camera: two framings, drag to circle around ----------------
 const view = { mode: 'full', yaw: 0, pitch: 0, zoom: 1, look: new THREE.Vector3(), base: new THREE.Vector3() };
 function setView(v) {
@@ -409,7 +478,6 @@ function placeCamera() {
   camera.position.set(view.look.x + Math.sin(yaw) * Math.cos(pitch) * d, view.look.y + Math.sin(pitch) * d, view.look.z + Math.cos(yaw) * Math.cos(pitch) * d);
   camera.position.y = Math.max(0.25, camera.position.y);
   camera.lookAt(view.look);
-  if (cur && cur.st.camK > 0) { const mp = mouthPose(cur); camera.position.lerp(mp.pos, cur.st.camK); camera.quaternion.slerp(mp.quat, cur.st.camK); }
   if (cur && cur.st.shake > 0) { const k = cur.st.shake * 0.02; camera.position.x += (Math.random() - 0.5) * k; camera.position.y += (Math.random() - 0.5) * k; camera.rotateZ((Math.random() - 0.5) * k * 2.5); }
 }
 const ptrs = new Map(); let pinch0 = 0, zoom0 = 1;
@@ -442,17 +510,17 @@ function placeLights(t) {
   const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
   // the trail camera sets its own exposure: the flash is as bright at the face as at the whole body
   let dSub = camera.position.distanceTo(view.look);
-  if (cur) { _hp.fromArray(cur.meta.headPivot).applyQuaternion(cur.root.quaternion).add(cur.root.position); dSub = Math.max(0.5, Math.min(dSub, camera.position.distanceTo(_hp) - 0.3)); dSub += (0.08 - dSub) * cur.st.camK; }
+  if (cur) { _hp.fromArray(cur.meta.headPivot).applyQuaternion(cur.root.quaternion).add(cur.root.position); dSub = Math.max(0.5, Math.min(dSub, camera.position.distanceTo(_hp) - 0.3)); }
   flash.intensity = 5.2 * dSub * dSub;
   flash.position.copy(camera.position).addScaledVector(camera.up, 0.08);
   flash.target.position.copy(camera.position).addScaledVector(fwd, 5);
   // the lantern held low in the left hand, its flame flickering
   lantern.position.copy(camera.position).addScaledVector(right, -0.32).addScaledVector(camera.up, -0.42).addScaledVector(fwd, 0.25);
   lantern.target.position.copy(camera.position).addScaledVector(fwd, 5).addScaledVector(camera.up, -0.6);
-  const ck = cur ? cur.st.camK : 0;
-  lantern.intensity = 22 * Math.min(1, Math.max(0.3 * (1 - ck) + 0.004 * ck, (dSub * dSub) / 10)) * (0.9 + 0.06 * Math.sin(t * 13) + 0.04 * Math.sin(t * 29 + 1));
+  lantern.intensity = 22 * Math.min(1, Math.max(0.3, (dSub * dSub) / 10)) * (0.9 + 0.06 * Math.sin(t * 13) + 0.04 * Math.sin(t * 29 + 1));
   const lp = mode => (mode === 'ir' ? flash.position : lantern.position);
   if (cur) cur.own.uLightP.value.copy(lp(lightMode));
+  lightP.value.copy(lp(lightMode));
 }
 
 // ---------------- post: bloom on the eyes, then grain, vignette and the trail camera's grey ----------------
@@ -462,34 +530,10 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.95, 0.55, 0.9);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const grade = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uIR: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) }, uBite: { value: 0 }, uLeak: { value: 1 }, uBiteH: { value: 0 } },
+  uniforms: { tDiffuse: { value: null }, uIR: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uIR, uTime, uBite, uLeak, uBiteH; uniform vec2 uRes; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uIR, uTime; uniform vec2 uRes; varying vec2 vUv;
     float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
-    float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
-    // jaws closing over the screen from above and below (from the sides for the split head); teeth interlock,
-    // leaving slits of light that die out
-    vec3 biteOver(vec3 c) {
-      vec2 q = uBiteH > 0.5 ? vec2(vUv.y, vUv.x) : vUv;
-      float n = uBiteH > 0.5 ? 7.0 : 5.0, th = uBiteH > 0.5 ? 0.1 : 0.16, k = uBite;
-      float tx = q.x * n + 0.3, tb = tx + 0.5, it = floor(tx), ib = floor(tb);
-      float triT = 1.0 - abs(fract(tx) - 0.5) * 2.0, triB = 1.0 - abs(fract(tb) - 0.5) * 2.0;
-      float hT = th * (0.55 + 0.9 * h1(it + 3.0)), hB = th * (0.55 + 0.9 * h1(ib + 9.0));
-      triT = pow(triT, 0.8 + 0.8 * h1(it + 5.0)); triB = pow(triB, 0.8 + 0.8 * h1(ib + 7.0));
-      float baseT = mix(1.0 + th * 1.5, 0.5 + th * 0.12, k), baseB = mix(-th * 1.5, 0.5 - th * 0.12, k);
-      float topE = baseT - hT * pow(triT, 1.6), botE = baseB + hB * pow(triB, 1.6);
-      float w = 0.003 + 0.012 * (1.0 - k);
-      float inT = smoothstep(topE - w, topE + w, q.y), inB = 1.0 - smoothstep(botE - w, botE + w, q.y);
-      float toothT = inT * (1.0 - smoothstep(baseT - 0.01, baseT + 0.01, q.y)), toothB = inB * smoothstep(baseB - 0.01, baseB + 0.01, q.y);
-      float lit = 0.25 + 0.75 * uLeak;
-      vec3 gum = mix(vec3(0.05, 0.012, 0.01), vec3(0.03), uIR);
-      gum += mix(vec3(0.18, 0.05, 0.04), vec3(0.1), uIR) * (exp(-abs(q.y - baseT) * 40.0) * inT + exp(-abs(q.y - baseB) * 40.0) * inB) * lit * (1.0 - toothT - toothB);
-      vec3 tooth = mix(vec3(0.62, 0.56, 0.44), vec3(0.58), uIR) * lit * (0.55 + 0.45 * (1.0 - abs(fract(uBiteH > 0.5 ? tx : tx) - 0.5) * 2.0));
-      vec3 jawC = mix(gum, tooth, max(toothT, toothB));
-      vec3 light = mix(vec3(0.55, 0.42, 0.3), vec3(0.45), uIR) * uLeak;
-      vec3 gap = mix(c, light, smoothstep(0.8, 1.0, k));
-      return mix(gap, jawC, max(inT, inB));
-    }
     void main() {
       vec2 px = 1.0 / uRes;
       vec3 c = texture2D(tDiffuse, vUv).rgb;
@@ -497,7 +541,6 @@ const grade = new ShaderPass({
       c = mix(c, b, 0.55 * uIR);
       float l = dot(c, vec3(0.299, 0.587, 0.114));
       c = mix(c, vec3(pow(l, 1.12)), uIR);
-      if (uBite > 0.001) c = biteOver(c);
       vec2 q = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
       c *= mix(0.3, 1.0, smoothstep(1.1, 0.25, length(q)));
       float g = h(floor(vUv * uRes / 1.5) + fract(uTime * 7.13) * 91.7) - 0.5;
@@ -518,8 +561,9 @@ async function setMonster(id) {
   $('pts').innerHTML = info.pts.map((p) => `<li>${p}</li>`).join('');
   const M = await loadMonster(id);
   if (cur) { scene.remove(cur.root); cur.root.position.set(0, 0, 0); cur.root.quaternion.identity(); }
-  grade.uniforms.uBite.value = 0; $('fade').style.opacity = 0; snd.restore();
+  $('fade').style.opacity = 0; snd.restore();
   cur = M; scene.add(M.root); M.st = newState();
+  await loadCows; layoutRow(M);
   setView(view.mode);
   $('loading').hidden = true;
 }
@@ -551,6 +595,7 @@ function frame(now) {
   const dt = Math.min(0.05, (now - last) / 1000) * speed; last = now;
   U.uTime.value += dt; grade.uniforms.uTime.value = U.uTime.value;
   if (cur) animate(cur, dt);
+  animateRow(dt);
   placeCamera(); placeLights(U.uTime.value);
   for (const p of herd) { const u = p.userData; u.blink -= dt; const k = u.blink < 0 ? Math.max(0.05, Math.abs(u.blink + 0.07) / 0.07) : 1; if (u.blink < -0.14) u.blink = 2 + Math.random() * 8; for (const s of p.children) s.scale.set(0.07, 0.07 * Math.min(1, k), 1); }
   composer.render();

@@ -209,6 +209,7 @@ export function makeMonsterSound(opt = {}) {
     o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1.9);
     tone(t + 0.35, 0.13, { f0: 62, f1: 42, gain: 0.45, att: 0.005 }); tone(t + 0.52, 0.15, { f0: 56, f1: 38, gain: 0.32, att: 0.005 });
   }
+  function snap() { if (ready()) crunch(a.currentTime + 0.005, 0.75); } // the jaws meeting on you
   function preview(kind) { if (ready()) { freeze(kind); setTimeout(() => { pounce(kind); setTimeout(restore, 1800); }, kind === 'growlRoar' ? 520 : 60); } }
   function previewBite(kind) { if (ready()) { bite(kind); setTimeout(restore, 2600); } }
   // ---------- the bite, then the dark ----------
@@ -254,6 +255,6 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, stop: () => a && stopLoop(),
+    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, stop: () => a && stopLoop(),
   };
 }
