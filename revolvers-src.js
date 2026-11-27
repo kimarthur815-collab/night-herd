@@ -93,7 +93,7 @@ function step(g, dt) {
 
 // ---------------- sound ----------------
 // gunshot candidates, to be judged by ear; and the small sounds of cocking and reloading
-let shotKind = 'now';
+let shotKind = 'powderCrack', dropKind = 'dirt';
 const snd = (() => {
   let ac = null, nb = null, out = null;
   const irs = {};
@@ -140,6 +140,21 @@ const snd = (() => {
     const lp = a.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = lpHz;
     const g = a.createGain(); g.gain.value = wet; cv.connect(lp).connect(g).connect(out); return cv;
   };
+  // the sharp "pak" of ①: a bright, instant burst, kept clear of ②'s overdrive so it stays crisp
+  const crack = (a, t, k) => {
+    const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, 'short', 1600, 0.5));
+    burst(a, t, 2600, 'bandpass', 0.8, 0.9 * k, 0.1 + 0.05 * (k - 1), bus);
+    burst(a, t, 5200, 'highpass', 0.7, 0.55 * k, 0.05, bus);
+    burst(a, t, 2800, 'lowpass', 0.7, 0.35 * k, 0.3, bus);
+  };
+  // a fired case landing: on the packed dirt by the fire (a dull tap and a second, softer one), or on rock (brass rings)
+  const tink = (a, t, g) => { for (const [f, d, k] of [[5200, 0.12, 1], [8900, 0.07, 0.6], [12400, 0.05, 0.4]]) ping(a, t, f * (0.98 + Math.random() * 0.04), g * k, d); burst(a, t, 6000, 'highpass', 0.7, g * 0.8, 0.008); };
+  const tap = (a, t, g) => { burst(a, t, 650, 'lowpass', 0.7, g, 0.035); burst(a, t, 2000, 'bandpass', 2, g * 0.35, 0.01); };
+  const DROPS = {
+    dirt(a, t) { tap(a, t, 0.22); tap(a, t + 0.085, 0.09); burst(a, t + 0.1, 3000, 'bandpass', 1, 0.025, 0.12); }, // ① and a little sand
+    rock(a, t) { tink(a, t, 0.06); tink(a, t + 0.11, 0.03); tink(a, t + 0.19, 0.012); }, // ②
+    both(a, t) { tap(a, t, 0.18); tink(a, t, 0.022); tap(a, t + 0.09, 0.07); tink(a, t + 0.09, 0.008); }, // ③
+  };
   const SHOTS = {
     now(a, t) { // ① the first one: a filtered burst with a delay-line echo
       const echo = a.createDelay(1); echo.delayTime.value = 0.31;
@@ -158,6 +173,8 @@ const snd = (() => {
       const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, 'canyon', 1400, 1.5));
       burst(a, t, 6000, 'highpass', 0.7, 0.9, 0.02, bus); burst(a, t, 3000, 'lowpass', 0.7, 0.9, 0.18, bus); thump(a, t, 110, 45, 0.7, 0.25, bus);
     },
+    powderCrack(a, t) { SHOTS.powder(a, t); crack(a, t, 1); }, // ⑤ ② with ①'s sharp crack on top
+    powderCrack2(a, t) { SHOTS.powder(a, t); crack(a, t, 1.5); }, // ⑥ the same, the crack louder and a hair longer
     ring(a, t) { // ④ the shot, then the ears ring and everything goes muffled
       const bus = a.createGain(), lp = a.createBiquadFilter(); lp.type = 'lowpass';
       lp.frequency.setValueAtTime(12000, t); lp.frequency.exponentialRampToValueAtTime(650, t + 0.12);
@@ -174,7 +191,7 @@ const snd = (() => {
     click(gain, f) { const a = ctx(); if (!a) return; const t = a.currentTime; burst(a, t, f, 'bandpass', 6, gain, 0.025); burst(a, t + 0.004, f * 0.55, 'bandpass', 3, gain * 0.5, 0.05); },
     bang() { const a = ctx(); if (a) SHOTS[shotKind](a, a.currentTime); },
     slide() { const a = ctx(); if (a) burst(a, a.currentTime, 2500, 'bandpass', 2, 0.12, 0.12); }, // the rod pushing a case out
-    drop() { const a = ctx(); if (!a) return; const t = a.currentTime; for (const [d, f, g] of [[0, 3900, 0.1], [0.09, 5200, 0.06], [0.17, 4500, 0.035]]) { ping(a, t + d, f, g, 0.12); burst(a, t + d, f, 'bandpass', 8, g, 0.03); } }, // brass on stone
+    drop() { const a = ctx(); if (a) DROPS[dropKind](a, a.currentTime); },
     insert() { const a = ctx(); if (a) burst(a, a.currentTime, 1200, 'bandpass', 3, 0.25, 0.05); },
   };
 })();
@@ -291,6 +308,7 @@ $('fire').addEventListener('click', () => fire(cur));
 $('reload').addEventListener('click', () => { if (cur) { reloadRevolver(cur.r, ON); updateAmmo(); } });
 $('spin').addEventListener('click', () => { spin = !spin; $('spin').classList.toggle('on', spin); idle = 99; });
 $('shotSel').addEventListener('change', (e) => { shotKind = e.target.value; snd.bang(); }); // pick one, hear it
+$('dropSel').addEventListener('change', (e) => { dropKind = e.target.value; snd.drop(); });
 $('aimSel').addEventListener('change', (e) => { aimKind = e.target.value; if (!fp) setView('fp'); });
 
 setLight('studio');
