@@ -1,7 +1,7 @@
 // monster-sound.js — the monsters' sounds, synthesized with Web Audio (no recordings).
 // I can't hear these: every sound here is a candidate for the ear to judge.
 // Breathing and growls run while a monster is on screen; the pounce, the bite and the dark are one-shots.
-export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 우르렁', machine: '② 기계음 섞인 포효', deep: '③ 낮고 묵직한 포효', gargle: '④ 끓는 목 그르렁 포효' };
+export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 우르렁', machine: '② 기계음 섞인 포효', deep: '③ 묵직한 포효', gargle: '④ 끓는 목 그르렁 포효' };
 export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' };
 
 export function makeMonsterSound(opt = {}) {
