@@ -93,7 +93,10 @@ export function coltSAA(barrelInches) {
   const hammerRoom = (x, y, z) => -box(x, y, z, 0, 0.009, 0.033, 0.0049, 0.0215, 0.025, 0.0006); // the cocked hammer swings back into the hump
   const window2 = poly(rounded([[-0.0414, -0.0354], [0.0012, -0.0354], [0.0012, 0.0091], [-0.0414, 0.0091]], 0.0025));
   const gy = CY + CR * 0.5, gate2 = poly(rounded([[0.0004, gy - 0.0074], [0.0088, gy - 0.0074], [0.0096, gy + 0.0062], [0.0004, gy + 0.0072]], 0.0022));
-  const frame = (x, y, z) => {
+  const gx = CR * 0.866; // the chamber at the gate, 2 o'clock seen from behind; the ejector rod runs in line with it
+  const gateRegion = (x, y, z) => Math.max(gate2(z, y), 0.0095 - x);
+  const groove = (x, y, z) => barZ(x, y, z, gx + 0.0012, gy, -0.001, 0.034, 0.0064, 0.0004);
+  const frameWhole = (x, y, z) => {
     const w = 0.0125 - 0.0058 * sstep(0.0045, 0.0105, y); // the top strap is narrower than the sides
     let d = slab(Math.max(frame2(z, y), -window2(z, y)), x, w, 0.0012);
     d = Math.max(d, -box(x, y, z, 0, 0.0, 0.0188, 0.0049, 0.024, 0.0148, 0.0006), hammerRoom(x, y, z)); // the hammer's slot
@@ -102,22 +105,32 @@ export function coltSAA(barrelInches) {
     // the recoil shield swells round behind the cylinder to cover the cartridge heads
     d = smin(d, barZ(x, y, z, 0, CY, 0.0006, 0.0088, 0.0206, 0.0034), 0.004);
     d = Math.max(d, -box(x, y, z, 0, 0.0, 0.0188, 0.0049, 0.024, 0.0148, 0.0006), hammerRoom(x, y, z));
-    d = Math.max(d, -Math.max(Math.abs(gate2(z, y)) - 0.00016, 0.011 - x)); // the loading gate's seam
-    d = Math.max(d, -box(x, y, z, 0.021, gy - 0.0068, 0.0046, 0.006, 0.0007, 0.0012, 0.0004)); // and the notch for a thumbnail
     return d;
   };
+  const frame = (x, y, z) => Math.max(frameWhole(x, y, z), 0.00018 - gateRegion(x, y, z), -groove(x, y, z), -barZ(x, y, z, gx, gy, -0.058, -0.04, 0.0019, 0.0002));
+  const gate = (x, y, z) => Math.max(frameWhole(x, y, z), gateRegion(x, y, z) + 0.00018,
+    -box(x, y, z, 0.021, gy - 0.0068, 0.0046, 0.006, 0.0007, 0.0012, 0.0004)); // with a notch for a thumbnail
   // barrel: a little thicker at the frame, the bore dark at the muzzle; ejector housing on the right; front sight; base pin
   const ez1 = zMuz + (barrelInches > 6 ? 0.036 : 0.022);
+  const hx = CR * 0.866, hy = CY + CR * 0.5; // the ejector housing, in line with the chamber at the gate
+  // the ejector: a rod inside the housing with a round "bullseye" button riding outside it in the slot.
+  // Pushed back 57 mm, its tip runs through the chamber at the gate and pushes the case out behind
+  const headZ = ez1 + 0.017;
+  const ejector = (x, y, z) => {
+    let d = barZ(x, y, z, hx, hy, ez1 + 0.0145, -0.057, 0.0016, 0.0005);
+    d = smin(d, box(x, y, z, hx + 0.004, hy, headZ, 0.0022, 0.0008, 0.0016, 0.0003), 0.0008);
+    d = smin(d, Math.max(Math.hypot(y - hy, z - headZ) - 0.0034, Math.abs(x - (hx + 0.0072)) - 0.0011), 0.001);
+    return Math.max(d, -Math.max(Math.hypot(y - hy, z - headZ) - 0.0021, hx + 0.0079 - x));
+  };
   const barrel = (x, y, z) => {
     const t = clamp((z - zMuz) / (-0.056 - zMuz), 0, 1), r = 0.0087 + 0.0007 * t;
     let d = barZ(x, y, z, 0, 0, zMuz, -0.05, r, 0.0011);
     if (z < zMuz + 0.04) d = Math.max(d, -(Math.hypot(x, y) - 0.0057));
     const fs = Math.hypot(z - (zMuz + 0.0088), y - 0.0055) - 0.0062; // half-moon front sight
     d = Math.min(d, slab(Math.max(fs, 0.0082 - y), x, 0.0012, 0.0004));
-    const hx = CR * 0.866, hy = CY + CR * 0.5; // in line with the chamber at the gate
     d = smin(d, barZ(x, y, z, hx, hy, ez1, -0.0555, 0.0047, 0.0016), 0.003);
-    d = Math.max(d, -box(x, y, z, hx + 0.0047, hy, (ez1 - 0.0555) / 2 + 0.006, 0.0012, 0.0011, (-0.0555 - ez1) / 2 - 0.014, 0.0004)); // the rod's slot
-    d = Math.min(d, barZ(x, y, z, hx, hy, ez1 - 0.0075, ez1 + 0.0015, 0.0041, 0.0012)); // ejector head
+    d = Math.max(d, -box(x, y, z, hx + 0.0047, hy, ez1 + 0.0455, 0.0012, 0.0011, 0.033, 0.0004)); // the slot the ejector's button rides in
+    d = Math.max(d, -barZ(x, y, z, hx, hy, ez1 + 0.004, -0.05, 0.0019, 0.0002)); // and the bore its rod slides in
     d = Math.min(d, barZ(x, y, z, 0, CY, -0.0632, -0.054, 0.0031, 0.0007)); // base pin head
     return d;
   };
@@ -127,7 +140,7 @@ export function coltSAA(barrelInches) {
   const FRONT = [[0.0172, -0.0455], [0.0186, -0.0505], [0.0215, -0.0605], [0.0255, -0.072], [0.0305, -0.084], [0.0362, -0.0955], [0.0425, -0.1055], [0.0475, -0.1112]];
   const back = sweep(zy(BACK), 0.0043, 1.38), front = sweep(zy(FRONT), 0.0038, 1.3);
   const guard = sweep(zy([[-0.0042, -0.0446], [-0.0104, -0.0512], [-0.0114, -0.0598], [-0.0064, -0.0667], [0.0036, -0.0697], [0.0126, -0.0672], [0.0176, -0.0602], [0.0186, -0.0505]]), 0.0026, 1.85);
-  const straps = (x, y, z) => Math.max(smin(smin(smin(hump(x, y, z), back(x, y, z), 0.004), front(x, y, z), 0.002), guard(x, y, z), 0.0025), hammerRoom(x, y, z));
+  const straps = (x, y, z) => Math.max(smin(smin(smin(hump(x, y, z), back(x, y, z), 0.004), front(x, y, z), 0.002), guard(x, y, z), 0.0025), hammerRoom(x, y, z), -groove(x, y, z));
   // one-piece grip, the "plough handle", fuller at the bottom
   const grip2 = poly(rounded([[0.0165, -0.0395], ...FRONT.slice(1), [0.058, -0.1145], [0.07, -0.1158], [0.082, -0.115], [0.091, -0.1128], ...BACK.slice(1).reverse(),
     [0.049, -0.011], [0.041, -0.0175], [0.031, -0.0275]], 0.004));
@@ -143,7 +156,8 @@ export function coltSAA(barrelInches) {
       const a = Math.PI / 2 + (k + 0.5) * (Math.PI / 3);
       d = smax(d, -barZ(x, y, z, Math.cos(a) * 0.0225, Math.sin(a) * 0.0225, -0.0318, -0.0082, 0.0042, 0.0042), 0.0006);
       const c = Math.PI / 2 + k * (Math.PI / 3);
-      d = Math.max(d, -barZ(x, y, z, Math.cos(c) * CR, Math.sin(c) * CR, zCyl - 0.002, zCyl + 0.016, 0.0061, 0.0003));
+      d = Math.max(d, -barZ(x, y, z, Math.cos(c) * CR, Math.sin(c) * CR, zCyl - 0.002, 0.002, 0.0061, 0.0003));
+      d = Math.max(d, -barZ(x, y, z, Math.cos(c) * CR, Math.sin(c) * CR, -0.0014, 0.002, 0.0066, 0.0002));
       // bolt stop notch with its lead-in, behind each chamber
       const lx = Math.cos(c), ly = Math.sin(c), radial = x * lx + y * ly, tang = -x * ly + y * lx;
       d = Math.max(d, -Math.max(Math.abs(tang) - 0.0013, radial - (R + 0.001), (R - 0.0011) - radial, Math.abs(z + 0.0058) - 0.0018));
@@ -169,6 +183,7 @@ export function coltSAA(barrelInches) {
   const trigger = (x, y, z) => smin(trigBlade(x, y + tp[1], z + tp[0]), box(x, y + tp[1], z + tp[0], 0, -0.0405, 0.0062, 0.0024, 0.0035, 0.0032, 0.001), 0.002);
   return {
     name: `colt${barrelInches}`, zMuz, cylY: CY, chamberR: CR, chamberZ: zCyl, hammerPivot: hp, triggerPivot: tp,
+    gatePivot: [0.0195, gy - 0.0064], gateAngle: Math.PI / 6, rodTip: -0.057, rodTravel: 0.057,
     parts: {
       frame: { sdf: frame, min: [-0.0255, -0.047, -0.06], max: [0.0255, 0.018, 0.05] },
       barrel: { sdf: barrel, min: [-0.012, -0.0175, zMuz - 0.002], max: [0.0185, 0.016, -0.048] },
@@ -178,6 +193,8 @@ export function coltSAA(barrelInches) {
       cylinder: { sdf: (x, y, z) => cylinder(x, y - CY, z), min: [-0.023, CY - 0.023, zCyl - 0.002], max: [0.023, CY + 0.023, 0.002], origin: [0, CY, 0] },
       hammer: { sdf: hammer, min: [-0.007, -0.012, -0.012], max: [0.007, 0.04, 0.03], origin: [0, 0, 0], pivot: hp },
       trigger: { sdf: trigger, min: [-0.004, -0.025, -0.008], max: [0.004, 0.0, 0.004], origin: [0, 0, 0], pivot: tp },
+      gate: { sdf: gate, min: [0.008, gy - 0.0095, -0.001], max: [0.0235, gy + 0.0095, 0.011] },
+      ejector: { sdf: ejector, min: [hx - 0.0025, hy - 0.0045, ez1 + 0.012], max: [hx + 0.0095, hy + 0.0045, -0.0555] },
     },
   };
 }

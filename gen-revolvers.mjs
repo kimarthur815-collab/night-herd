@@ -12,7 +12,7 @@ const guns = { colt75: coltSAA(7.5), colt475: coltSAA(4.75), schofield: schofiel
 for (const [id, g] of Object.entries(guns)) {
   const file = `${OUT}/${id}.json`, packed = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).parts : {};
   const meta = {};
-  meta[id] = { zMuz: g.zMuz, cylY: g.cylY, chamberR: g.chamberR, chamberZ: g.chamberZ, hammerPivot: g.hammerPivot, triggerPivot: g.triggerPivot, parts: [] };
+  meta[id] = { zMuz: g.zMuz, cylY: g.cylY, chamberR: g.chamberR, chamberZ: g.chamberZ, hammerPivot: g.hammerPivot, triggerPivot: g.triggerPivot, gatePivot: g.gatePivot, gateAngle: g.gateAngle, rodTip: g.rodTip, rodTravel: g.rodTravel, parts: [] };
   for (const [name, part] of Object.entries(g.parts)) {
     meta[id].parts.push(name);
     if (ONLY && !ONLY.test(`${id}/${name}`)) continue;

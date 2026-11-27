@@ -118,6 +118,10 @@ vec3 c; float rough;
 #elif KIND == 6 // lead
   c = vec3(0.38, 0.38, 0.4) * (0.9 + 0.2*vn(P*900.0));
   rough = 0.55;
+#elif KIND == 8 // brass cases, gone dull and brown with handling
+  c = vec3(0.78, 0.56, 0.26) * (0.85 + 0.2*vn(P*600.0));
+  c = mix(c, vec3(0.42, 0.28, 0.12), smoothstep(0.45, 0.75, fbm(P*300.0))*0.5);
+  rough = 0.32 + 0.1*vn(P*900.0);
 #else // bright steel
   c = vec3(0.58, 0.58, 0.6) * (0.95 + 0.1*vn(P*400.0));
   rough = 0.3;
@@ -135,7 +139,7 @@ const AO = `
   float dOcc = mix(1.0, vAtt.x, 0.6);
   reflectedLight.directSpecular *= dOcc; reflectedLight.directDiffuse *= dOcc; }
 `;
-const KINDS = { blued: 0, case: 1, nickel: 2, walnut: 3, ivory: 4, fireblue: 5, lead: 6, steel: 7 };
+const KINDS = { blued: 0, case: 1, nickel: 2, walnut: 3, ivory: 4, fireblue: 5, lead: 6, steel: 7, brass: 8 };
 const matCache = new Map();
 export function revolverMaterial(kind, wear) {
   const id = kind + wear;
@@ -200,13 +204,24 @@ function plainAtt(g) { // lathe parts have no baked occlusion: fully open, flat
   g.setAttribute('aAtt', new THREE.BufferAttribute(a, 2, true));
   return g;
 }
-// a round-nosed lead bullet, its tip at z = 0, the body running back to +z
-const bulletGeo = (() => {
-  const prof = [[0.0057, 0], [0.0057, 0.0068], [0.0055, 0.0082], [0.0049, 0.0097], [0.0039, 0.011], [0.0025, 0.0119], [0.001, 0.0124], [0, 0.0125]];
-  const g = new THREE.LatheGeometry(prof.map(([r, y]) => new THREE.Vector2(r, y)), 28);
-  g.rotateX(-Math.PI / 2); g.translate(0, 0, 0.0125);
-  return plainAtt(g);
-})();
+// a cartridge, rim at z = 0 running forward to -z: a brass case (open at the mouth, so a fired one is hollow)
+// and a round-nosed lead bullet. sc shortens it for a shorter cylinder (the .45 Schofield round)
+const cartCache = new Map();
+function cartridgeGeos(sc) {
+  if (cartCache.has(sc)) return cartCache.get(sc);
+  const lathe = (prof) => {
+    const g = new THREE.LatheGeometry(prof.map(([r, d]) => new THREE.Vector2(r, d * sc)), 24);
+    g.rotateX(-Math.PI / 2);
+    return plainAtt(g);
+  };
+  const geos = {
+    case: lathe([[0.0001, 0.0002], [0.0024, 0.0002], [0.0025, 0], [0.0064, 0], [0.0065, 0.0004], [0.0064, 0.0013], [0.0058, 0.0016], [0.0058, 0.031], [0.0054, 0.031], [0.0053, 0.0285], [0.0053, 0.004], [0.0001, 0.004]]),
+    bullet: lathe([[0.0001, 0.026], [0.0057, 0.026], [0.0057, 0.0315], [0.0055, 0.0332], [0.0049, 0.0348], [0.0039, 0.0361], [0.0025, 0.037], [0.001, 0.0373], [0, 0.0374]]),
+    caseLen: 0.031 * sc, tipLen: 0.0374 * sc,
+  };
+  cartCache.set(sc, geos);
+  return geos;
+}
 
 // put a baked gun together: the cylinder, hammer and trigger each on a pivot, five lead bullets in the cylinder
 export function buildRevolver(meta, geos, conf) {
@@ -214,6 +229,7 @@ export function buildRevolver(meta, geos, conf) {
   const M = (k) => revolverMaterial(k, conf.wear);
   const add = (geo, k, parent = group) => { const m = new THREE.Mesh(geo, M(k)); parent.add(m); return m; };
   const cyl = new THREE.Group(), ham = new THREE.Group(), trg = new THREE.Group();
+  let gate = null, rod = null;
   cyl.position.set(0, meta.cylY, 0);
   ham.position.set(0, meta.hammerPivot[1], meta.hammerPivot[0]);
   trg.position.set(0, meta.triggerPivot[1], meta.triggerPivot[0]);
@@ -223,19 +239,27 @@ export function buildRevolver(meta, geos, conf) {
     if (n === 'cylinder') { geo.translate(0, -meta.cylY, 0); add(geo, conf.mats.cylinder, cyl); }
     else if (n === 'hammer') add(geo, conf.mats.hammer, ham);
     else if (n === 'trigger') add(geo, conf.mats.trigger, trg);
+    else if (n === 'gate') { // the loading gate swings out on a hinge along its lower edge
+      gate = new THREE.Group(); gate.position.set(meta.gatePivot[0], meta.gatePivot[1], 0); group.add(gate);
+      geo.translate(-meta.gatePivot[0], -meta.gatePivot[1], 0); add(geo, conf.mats.frame, gate);
+    } else if (n === 'ejector') { rod = new THREE.Group(); group.add(rod); add(geo, conf.mats.barrel, rod); }
     else if (n === 'screws' && conf.mats.ring) { const [s, r] = splitBelow(geo, -0.11); add(s, conf.mats.screws); add(r, conf.mats.ring); }
     else add(geo, conf.mats[n]);
   }
-  const bullets = [];
+  // a cartridge in every chamber, its rim sunk in the recess at the back of the cylinder
+  const cg = cartridgeGeos(Math.min(1, (-meta.chamberZ - 0.0031) / 0.0374)), carts = [], bullets = [];
   for (let k = 0; k < 6; k++) {
-    const a = Math.PI / 2 + conf.turn * k * Math.PI / 3, b = add(bulletGeo, 'lead', cyl);
-    b.position.set(Math.cos(a) * meta.chamberR, Math.sin(a) * meta.chamberR, meta.chamberZ + 0.0032);
-    bullets.push(b);
+    const a = Math.PI / 2 + conf.turn * k * Math.PI / 3, c = new THREE.Group();
+    c.userData.home = new THREE.Vector3(Math.cos(a) * meta.chamberR, Math.sin(a) * meta.chamberR, -0.0001);
+    c.userData.out = new THREE.Vector3(Math.cos(a), Math.sin(a), 0); // straight out from the cylinder's axis
+    c.position.copy(c.userData.home); cyl.add(c);
+    c.userData.case = add(cg.case, 'brass', c); bullets.push(add(cg.bullet, 'lead', c));
+    carts.push(c);
   }
-  const r = { conf, meta, group, cylinder: cyl, hammer: ham, trigger: trg, bullets,
+  const r = { conf, meta, group, cylinder: cyl, hammer: ham, trigger: trg, gate, rod, carts, bullets, cart: cg, drops: [],
     muzzle: new THREE.Vector3(0, 0, meta.zMuz), grip: new THREE.Vector3(0, -0.08, 0.045), // where the hand holds it: recoil turns about here
-    state: { top: 0, loaded: [], cocked: false, anim: null } };
-  reloadRevolver(r);
+    state: { top: 0, chambers: [], cocked: false, anim: null } };
+  reloadRevolver(r, {}, { instant: true });
   return r;
 }
 // load a packed gun (one JSON: its id, meta and every part), from a URL or the parsed object
@@ -249,7 +273,8 @@ export async function loadRevolver(src) {
 // ---------------- the action ----------------
 // a single action: cock draws the hammer back and turns the cylinder a sixth; fire drops it on the chamber now on top.
 // The hammer rests on the empty sixth, as it was carried. `on` gets the moments to make sounds and flashes for:
-// on.click(gain, pitch), on.shot(), on.dry().
+// on.click(gain, pitch), on.shot(), on.dry(); while reloading also on.slide() (a case pushed out), on.drop() (it lands),
+// on.insert() (a round goes in).
 const TRIG_BACK = 0.11;
 const ease = (u) => u * u * (3 - 2 * u), sstep = (a, b, x) => ease(Math.min(1, Math.max(0, (x - a) / (b - a))));
 export function poseRevolver(r, ham, trig, cylA) {
@@ -257,11 +282,110 @@ export function poseRevolver(r, ham, trig, cylA) {
   r.trigger.rotation.x = -TRIG_BACK * trig;
   r.cylinder.rotation.z = -r.conf.turn * cylA * Math.PI / 3;
 }
-export function reloadRevolver(r) {
+// what each chamber holds shows in its cartridge: a fired one keeps its empty case
+function showChambers(r) {
+  r.carts.forEach((c, k) => {
+    const h = r.state.chambers[k];
+    c.visible = h !== 'empty'; r.bullets[k].visible = h === 'live';
+    c.position.copy(c.userData.home); c.quaternion.identity();
+  });
+}
+export const liveRounds = (r) => r.state.chambers.filter((h) => h === 'live').length;
+// reload. A Colt goes one round at a time through the loading gate: half cock, open the gate, then a click of the
+// cylinder at a time, the ejector pushing out each fired case and a fresh round going in, one chamber left empty
+// for the hammer to rest on (load one, skip one, load four); close the gate, cock, and ease the hammer down.
+// A gun without a gate (or opts.instant) is simply full again.
+export function reloadRevolver(r, on = {}, opts = {}) {
   const s = r.state;
-  s.loaded = [false, true, true, true, true, true]; s.top = 0; s.cocked = false; s.anim = null;
-  r.bullets.forEach((b, k) => (b.visible = s.loaded[k]));
-  poseRevolver(r, 0, 1, 0);
+  if (s.anim) return false;
+  if (!r.gate || opts.instant) {
+    s.chambers = ['empty', 'live', 'live', 'live', 'live', 'live']; s.top = 0; s.cocked = false;
+    for (const d of r.drops) d.obj.removeFromParent();
+    r.drops.length = 0; showChambers(r); poseRevolver(r, 0, 1, 0);
+    if (r.gate) r.gate.rotation.z = 0;
+    return true;
+  }
+  const t0 = s.top, ch = s.chambers.slice(), E = (t0 + 1) % 6, steps = [{ k: 'half' }, { k: 'open' }];
+  for (let i = 1; i <= 6; i++) {
+    const c = (t0 + i - 1) % 6; // the chamber at the gate after i clicks
+    steps.push({ k: 'turn' });
+    if (ch[c] === 'spent' || (c === E && ch[c] !== 'empty')) { steps.push({ k: 'eject', c }); ch[c] = 'empty'; }
+    if (c !== E && ch[c] === 'empty') { steps.push({ k: 'insert', c }); ch[c] = 'live'; }
+  }
+  steps.push({ k: 'close' }, { k: 'cock' }, { k: 'lower' });
+  s.cocked = false;
+  s.anim = { type: 'reload', steps, i: -1, t: 0 };
+  return true;
+}
+const STEP_T = { half: 0.3, open: 0.3, turn: 0.22, eject: 0.6, insert: 0.5, close: 0.28, cock: 0.34, lower: 0.5 };
+const _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _v = new THREE.Vector3(), _ax = new THREE.Vector3();
+function dropCase(r, k, on) { // the case leaves the cylinder and falls, tumbling, out of the gun
+  const c = r.carts[k], d = c.clone();
+  c.updateMatrix(); _m.multiplyMatrices(r.cylinder.matrix, c.matrix);
+  _m.decompose(d.position, d.quaternion, d.scale);
+  r.group.add(d);
+  const out = _v.copy(c.userData.out).applyQuaternion(r.cylinder.quaternion);
+  r.drops.push({ obj: d, t: 0, v: new THREE.Vector3(out.x * 0.35, out.y * 0.35 + 0.15, 0.45), w: new THREE.Vector3(8 + Math.random() * 6, 3 - Math.random() * 6, 0) });
+  c.visible = false; c.position.copy(c.userData.home);
+  on.slide?.();
+}
+function stepDrops(r, dt, on) {
+  if (!r.drops.length) return;
+  r.group.updateWorldMatrix(true, false);
+  r.group.matrixWorld.decompose(_v, _q, _ax);
+  const g = new THREE.Vector3(0, -9.8 / _ax.y, 0).applyQuaternion(_q.invert()); // down, in the gun's own frame
+  for (let i = r.drops.length - 1; i >= 0; i--) {
+    const d = r.drops[i];
+    d.t += dt; d.v.addScaledVector(g, dt); d.obj.position.addScaledVector(d.v, dt);
+    d.obj.rotation.x += d.w.x * dt; d.obj.rotation.y += d.w.y * dt;
+    if (!d.rang && d.t > 0.5) { d.rang = 1; on.drop?.(); }
+    if (d.t > 1.4) { d.obj.removeFromParent(); r.drops.splice(i, 1); }
+  }
+}
+// one frame of a reload; returns the pose
+function stepReload(r, a, dt, on) {
+  const s = r.state;
+  let st = a.steps[a.i];
+  if (a.i < 0 || a.t >= STEP_T[st.k]) { // the next step begins
+    if (st?.k === 'eject') r.rod.position.z = 0;
+    a.i++; a.t = 0; st = a.steps[a.i];
+    if (!st) { s.anim = null; return [0, 1, s.top, 0]; }
+    if (st.k === 'turn' || st.k === 'cock') { a.from = s.top; s.top = (s.top + 1) % 6; }
+    if (st.k === 'insert') { s.chambers[st.c] = 'live'; const c = r.carts[st.c]; c.visible = true; r.bullets[st.c].visible = true; on.insert?.(); }
+    if (st.k === 'open' || st.k === 'close' || st.k === 'half') on.click?.(0.3, st.k === 'half' ? 2600 : 1700);
+  }
+  a.t += dt;
+  const u = Math.min(1, a.t / STEP_T[st.k]), e = ease(u);
+  let ham = 0.3, trig = 0.5, gate = 1, cylA = s.top;
+  switch (st.k) {
+    case 'half': ham = 0.3 * e; trig = 1 - 0.5 * e; gate = 0; break;
+    case 'open': gate = e; break;
+    case 'turn': cylA = a.from + sstep(0, 0.8, u); if (!a.c && u > 0.8) { a.c = 1; on.click?.(0.18, 4200); } break;
+    case 'eject': { // push the rod, the case slides out the back with it, then the rod springs home
+      const push = u < 0.55 ? ease(u / 0.55) : 1 - ease((u - 0.55) / 0.45);
+      r.rod.position.z = push * r.meta.rodTravel;
+      const c = r.carts[st.c], front = c.userData.home.z - (s.chambers[st.c] === 'live' ? r.cart.tipLen : r.cart.caseLen);
+      if (c.visible) c.position.z = c.userData.home.z + Math.max(0, r.meta.rodTip + push * r.meta.rodTravel - front);
+      if (c.visible && u >= 0.55) { s.chambers[st.c] = 'empty'; dropCase(r, st.c, on); }
+      break;
+    }
+    case 'insert': { // nose first into the chamber mouth, tilted out, then pushed home straight
+      const c = r.carts[st.c], h = c.userData.home, L = r.cart.tipLen;
+      const tilt = 0.35 * (1 - sstep(0.4, 1, u)), tip = new THREE.Vector3(h.x, h.y, 0);
+      if (u < 0.4) tip.addScaledVector(c.userData.out, 0.022 * (1 - ease(u / 0.4))).z += 0.004 * (1 - ease(u / 0.4));
+      else tip.z = -L * ease((u - 0.4) / 0.6) + 0.0;
+      _ax.set(-c.userData.out.y, c.userData.out.x, 0);
+      c.quaternion.setFromAxisAngle(_ax, tilt);
+      c.position.copy(tip).add(_v.set(0, 0, L).applyQuaternion(c.quaternion));
+      if (u >= 1) { c.position.copy(h); c.quaternion.identity(); }
+      break;
+    }
+    case 'close': gate = 1 - e; break;
+    case 'cock': gate = 0; ham = 0.3 + 0.7 * e; cylA = a.from + sstep(0.2, 0.85, u); trig = 0.5 * (1 - sstep(0.7, 1, u)); if (!a.c2 && u >= 1) { a.c2 = 1; on.click?.(0.6, 2900); } break;
+    case 'lower': gate = 0; ham = 1 - ease(Math.max(0, (u - 0.15) / 0.85)); trig = u < 0.15 ? 1.45 * (u / 0.15) : 1.45 - 0.45 * sstep(0.85, 1, u); break;
+  }
+  if (r.gate) r.gate.rotation.z = -1.65 * gate;
+  return [ham, trig, cylA];
 }
 export function cockRevolver(r, on = {}) {
   const s = r.state;
@@ -280,7 +404,9 @@ export function fireRevolver(r, on = {}) {
 export function updateRevolver(r, dt, on = {}) {
   const s = r.state, a = s.anim;
   let ham = s.cocked ? 1 : 0, trig = s.cocked ? 0 : 1, cylA = s.top;
-  if (a) {
+  stepDrops(r, dt, on);
+  if (a && a.type === 'reload') { [ham, trig, cylA] = stepReload(r, a, dt, on); }
+  else if (a) {
     a.t += dt;
     if (a.type === 'cock') {
       const u = Math.min(1, a.t / 0.34);
@@ -293,7 +419,7 @@ export function updateRevolver(r, dt, on = {}) {
       ham = u < 0.05 ? 1 : Math.max(0, 1 - (u - 0.05) / 0.03);
       if (!a.shot && u >= 0.08) {
         a.shot = 1; s.cocked = false;
-        if (s.loaded[s.top]) { s.loaded[s.top] = false; r.bullets[s.top].visible = false; on.shot?.(); }
+        if (s.chambers[s.top] === 'live') { s.chambers[s.top] = 'spent'; r.bullets[s.top].visible = false; on.shot?.(); }
         else on.dry?.();
       }
       if (u > 0.08) trig = 1 + 0.45 * Math.max(0, 1 - (u - 0.08) / 0.2);

@@ -36,6 +36,16 @@
   .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
   .seg button { font: inherit; font-size: 13px; border: 0; padding: 8px 10px; background: transparent; color: var(--dim); }
   .seg button.on { background: rgba(211,154,78,0.28); color: var(--ink); }
+  .pick { color: var(--dim); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .pick select { font: inherit; color: var(--ink); background: #2d2925; border: 1px solid rgba(255,255,255,0.15); border-radius: 8px; padding: 7px 8px; }
+  #xhair { position: absolute; left: 50%; top: 50%; pointer-events: none; transform: translate(-50%, -50%); transition: opacity 0.12s; }
+  #xhair.none { display: none; }
+  #xhair.dot, #xhair.cocked, #xhair.muzzle { width: 4px; height: 4px; border-radius: 50%; background: rgba(255, 240, 220, 0.6); box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45); }
+  #xhair.cross { width: 15px; height: 15px; background:
+    linear-gradient(rgba(255,240,220,0.55), rgba(255,240,220,0.55)) center 0 / 1px 5px no-repeat,
+    linear-gradient(rgba(255,240,220,0.55), rgba(255,240,220,0.55)) center 100% / 1px 5px no-repeat,
+    linear-gradient(rgba(255,240,220,0.55), rgba(255,240,220,0.55)) 0 center / 5px 1px no-repeat,
+    linear-gradient(rgba(255,240,220,0.55), rgba(255,240,220,0.55)) 100% center / 5px 1px no-repeat; }
   .note { color: var(--dim); font-size: 11.5px; margin: 8px 0 0; }
 </style>
 </head>
@@ -46,6 +56,7 @@
     <canvas id="c"></canvas>
     <div id="loading">불러오는 중…</div>
     <div id="hint">끌어서 돌리기 · 두 손가락으로 확대</div>
+    <div id="xhair" class="none"></div>
   </div>
   <footer>
     <p class="tag" id="tag"></p>
@@ -62,6 +73,10 @@
       <span class="seg" id="light"><button data-v="studio">스튜디오</button><button data-v="day">낮</button><button data-v="night">밤 랜턴</button></span>
       <span class="seg" id="view"><button data-v="side" class="on">오른쪽</button><button data-v="left">왼쪽</button><button data-v="fp">1인칭</button><button data-v="front">앞</button></span>
       <button class="btn on" id="spin">자동 회전</button>
+    </div>
+    <div class="row">
+      <label class="pick">총소리 <select id="shotSel"><option value="now">① 지금 소리</option><option value="powder">② 흑색화약 쾅</option><option value="canyon">③ 사막 메아리</option><option value="ring">④ 귀 울림</option></select></label>
+      <label class="pick">조준점 <select id="aimSel"><option value="none">① 없음</option><option value="dot">② 가운데 점</option><option value="cocked">③ 젖혔을 때만 점</option><option value="muzzle">④ 총구 따라가는 점</option><option value="cross">⑤ 얇은 십자</option></select></label>
     </div>
     <p class="note">총열 길이, 마감, 손잡이 재질은 제가 고른 임시 값이에요. 바꿀 수 있어요.</p>
   </footer>
