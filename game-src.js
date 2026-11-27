@@ -1,6 +1,7 @@
 // Night Herd — the night at the herd. One source, two builds (WITH_COUNTING is set by esbuild --define):
 //   WITH_COUNTING=true  → first slice "밤 한 번": count the herd by looking at each cow in the light of the lantern you hold
 //   WITH_COUNTING=false → lantern slice: the held lantern on its own
+//   WALK=true           → walk slice: a sunny desert day, the herd walks away from you when you come close
 // The lantern: walk, raise it, let it go out (by hand, wind or empty oil), relight it only at the campfire.
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
@@ -76,37 +77,77 @@ float vnoise3(vec3 x){ vec3 i = floor(x); vec3 f = fract(x); f = f*f*(3.0-2.0*f)
 `;
 
 // ---------------- cows ----------------
+// the cow rig, shared by the visible mesh and its shadow: head, neck, tail and four walking legs
+const COW_RIG_DECL = `
+  attribute vec4 aRig; attribute vec4 aLeg;
+  uniform vec4 uPose; uniform float uTail; uniform vec4 uGait;
+  mat3 rotYP(float yaw, float pitchUp){ float cy = cos(yaw), sy = sin(yaw), ca = cos(-pitchUp), sa = sin(-pitchUp);
+    return mat3(cy,0.0,-sy, 0.0,1.0,0.0, sy,0.0,cy) * mat3(1.0,0.0,0.0, 0.0,ca,sa, 0.0,-sa,ca); }
+  mat3 rotZ(float a){ float c = cos(a), s = sin(a); return mat3(c,s,0.0, -s,c,0.0, 0.0,0.0,1.0); }
+  mat3 rotX(float a){ float c = cos(a), s = sin(a); return mat3(1.0,0.0,0.0, 0.0,c,s, 0.0,-s,c); }`;
+const COW_RIG_MATS = `
+  const vec3 N0 = vec3(0.0, 1.08, 0.58); const vec3 H0 = vec3(0.0, 1.22, 1.03); const vec3 T0 = vec3(0.0, 1.2, -0.9);
+  mat3 rH = rotYP(uPose.z * aRig.y, uPose.w * aRig.y);
+  mat3 rN = rotYP(uPose.x * aRig.x, uPose.y * aRig.x);
+  mat3 rT = rotZ(uTail * aRig.z);
+  // legs: a four-beat walk (left hind, left fore, right hind, right fore); the knee or hock folds, then the whole leg swings
+  mat3 rKnee = mat3(1.0), rHip = mat3(1.0); vec3 kneeP = vec3(0.0), hipP = vec3(0.0);
+  float legId = floor(aLeg.x * 255.0 / 50.0 + 0.5);
+  if (legId > 0.5 && uGait.y > 0.001) {
+    bool front = legId < 2.5;
+    float side = (legId == 1.0 || legId == 3.0) ? 1.0 : -1.0;
+    float off = legId == 1.0 ? 0.75 : (legId == 2.0 ? 0.25 : (legId == 3.0 ? 0.5 : 0.0));
+    float ps = fract(uGait.x + off);
+    float A = front ? 0.3 : 0.28, a, k;
+    if (ps < 0.62) { a = mix(A, -A, ps / 0.62); k = 0.0; }
+    else { float sw = (ps - 0.62) / 0.38; a = mix(-A, A, sw*sw*(3.0-2.0*sw)); k = sin(3.14159 * sw) * (front ? 0.95 : 0.75); }
+    a *= uGait.y; k *= uGait.y;
+    hipP = front ? vec3(0.17*side, 0.95, 0.43) : vec3(0.2*side, 0.95, -0.46);
+    kneeP = front ? vec3(0.16*side, 0.43, 0.488) : vec3(0.17*side, 0.5, -0.736);
+    rKnee = rotX(k * aLeg.z);
+    rHip = rotX(-a * aLeg.y);
+  }`;
+const COW_RIG_POS = `
+  transformed = kneeP + rKnee * (transformed - kneeP);
+  transformed = hipP + rHip * (transformed - hipP);
+  transformed = T0 + rT * (transformed - T0);
+  transformed = H0 + rH * (transformed - H0);
+  transformed = N0 + rN * (transformed - N0);`;
+// the shadow a cow casts has to move the same way the cow does
+function cowDepthMaterial(own) {
+  const m = new THREE.MeshDepthMaterial({ depthPacking: THREE.RGBADepthPacking });
+  m.onBeforeCompile = (sh) => {
+    Object.assign(sh.uniforms, own);
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', `#include <common>\n${COW_RIG_DECL}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\n${COW_RIG_MATS}\n${COW_RIG_POS}`);
+  };
+  m.customProgramCacheKey = () => 'cow-depth-v1';
+  return m;
+}
 function cowMaterial(coat, face, phase) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0, sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color(coat * 0.6, coat * 0.56, coat * 0.48) });
   const own = {
     uBody: { value: new THREE.Color(coat, coat * 0.93, coat * 0.8) }, uFace: { value: new THREE.Color(face, face * 0.93, face * 0.8) },
-    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 },
+    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 }, uGait: { value: new THREE.Vector4() },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U, own);
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>
-        attribute vec4 aMat; attribute vec4 aExt4; attribute vec3 aHead; attribute vec4 aRig;
-        uniform float uTime; uniform float uPhase; uniform vec4 uPose; uniform float uTail;
+        attribute vec4 aMat; attribute vec4 aExt4; attribute vec3 aHead;
+        uniform float uTime; uniform float uPhase;
         varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;
-        mat3 rotYP(float yaw, float pitchUp){ float cy = cos(yaw), sy = sin(yaw), ca = cos(-pitchUp), sa = sin(-pitchUp);
-          return mat3(cy,0.0,-sy, 0.0,1.0,0.0, sy,0.0,cy) * mat3(1.0,0.0,0.0, 0.0,ca,sa, 0.0,-sa,ca); }
-        mat3 rotZ(float a){ float c = cos(a), s = sin(a); return mat3(c,s,0.0, -s,c,0.0, 0.0,0.0,1.0); }`)
+        ${COW_RIG_DECL}`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>
-        const vec3 N0 = vec3(0.0, 1.08, 0.58); const vec3 H0 = vec3(0.0, 1.22, 1.03); const vec3 T0 = vec3(0.0, 1.2, -0.9);
-        mat3 rH = rotYP(uPose.z * aRig.y, uPose.w * aRig.y);
-        mat3 rN = rotYP(uPose.x * aRig.x, uPose.y * aRig.x);
-        mat3 rT = rotZ(uTail * aRig.z);
-        objectNormal = rN * (rH * (rT * objectNormal));`)
+        ${COW_RIG_MATS}
+        objectNormal = rN * (rH * (rT * (rHip * (rKnee * objectNormal))));`)
       .replace('#include <begin_vertex>', `#include <begin_vertex>
         vMat = aMat; vEye = aExt4.x; vExt = aExt4.yzw; vObj = position; vHead = aHead;
         { float br = sin(uTime*1.3 + uPhase)*0.5 + 0.5;
           float barrel = smoothstep(0.6, 0.85, position.y) * (1.0 - smoothstep(1.15, 1.32, position.y)) * (1.0 - smoothstep(0.5, 0.85, abs(position.z + 0.05))) * (1.0 - aRig.x);
           transformed += normal * barrel * br * 0.007; }
-        transformed = T0 + rT * (transformed - T0);
-        transformed = H0 + rH * (transformed - H0);
-        transformed = N0 + rN * (transformed - N0);`)
+        ${COW_RIG_POS}`)
       .replace('#include <fog_vertex>', '#include <fog_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
@@ -142,7 +183,7 @@ function cowMaterial(coat, face, phase) {
         { float dl = length(vWP - uLanternPos); float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
           totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), 1.5) + uEyeSelf * pow(fc, 4.0)); }`);
   };
-  m.customProgramCacheKey = () => 'cow-rig-v2';
+  m.customProgramCacheKey = () => 'cow-rig-v3';
   return m;
 }
 
@@ -162,7 +203,8 @@ async function loadVariants(onProgress) {
     const nrm = new Int8Array(buf, o, vc * 3); o += vc * 3;
     const mat = new Uint8Array(buf, o, vc * 4); o += vc * 4;
     const ext = new Uint8Array(buf, o, vc * 4); o += vc * 4;
-    const rig = new Uint8Array(buf, o, vc * 4);
+    const rig = new Uint8Array(buf, o, vc * 4); o += vc * 4;
+    const leg = m.leg ? new Uint8Array(buf, o, vc * 4) : new Uint8Array(vc * 4); // older bakes have no leg weights
     const pos = new Float32Array(vc * 3), head = new Float32Array(vc * 3);
     for (let i = 0; i < vc * 3; i++) { pos[i] = pos16[i] * m.ps; head[i] = head16[i] * m.hs; }
     const g = new THREE.BufferGeometry();
@@ -171,6 +213,7 @@ async function loadVariants(onProgress) {
     g.setAttribute('aMat', new THREE.BufferAttribute(new Uint8Array(mat), 4, true));
     g.setAttribute('aExt4', new THREE.BufferAttribute(new Uint8Array(ext), 4, true));
     g.setAttribute('aRig', new THREE.BufferAttribute(new Uint8Array(rig), 4, true));
+    g.setAttribute('aLeg', new THREE.BufferAttribute(new Uint8Array(leg), 4, true));
     g.setAttribute('aHead', new THREE.BufferAttribute(head, 3));
     g.setIndex(new THREE.BufferAttribute(new Uint16Array(idx), 1));
     g.boundingSphere = new THREE.Sphere(new THREE.Vector3(0, 0.8, 0), 2.2); // heads move: keep a generous bound
@@ -207,15 +250,17 @@ function makeGround() {
           col = mix(col, vec3(0.26,0.225,0.17), wash*0.55);
           float peb = vnoise3(q*38.0)*0.5+0.5;
           col *= 0.86 + 0.26*smoothstep(0.5, 0.8, peb) - 0.2*smoothstep(0.72, 0.9, c3);
-          float burnt = 1.0 - smoothstep(0.5, 1.2, length(vWP2.xz - vec2(${FIRE_POS.x.toFixed(2)}, ${FIRE_POS.z.toFixed(2)})));
+          float burnt = ${WALK ? '0.0' : '1.0'} * (1.0 - smoothstep(0.5, 1.2, length(vWP2.xz - vec2(${FIRE_POS.x.toFixed(2)}, ${FIRE_POS.z.toFixed(2)})))); // the campfire's scorch (no campfire by day)
           col = mix(col, vec3(0.03,0.025,0.02), burnt);
           col *= (0.7 + 0.45*c2) * (0.85 + 0.3*c3);
           diffuseColor.rgb = col; }`);
   };
   const mesh = new THREE.Mesh(g, m);
   WORLD_FOLLOW.push(mesh);
+  groundMesh = mesh;
   return mesh;
 }
+let groundMesh = null;
 
 function makeGrass(count) {
   const segs = 2, pos = [], nrm = [], idx = [];
@@ -266,13 +311,13 @@ function makeGrass(count) {
 }
 
 // the horizon: two ranges of jagged southern-Arizona mountains, dark against the night haze
-const RIDGE_U = { uHaze: { value: new THREE.Color() } };
+const RIDGE_U = { uHaze: { value: new THREE.Color() }, uLift: { value: 0 } };
 function makeRidges() {
   const grp = new THREE.Group();
   const mat = new THREE.ShaderMaterial({
     fog: false, side: THREE.DoubleSide, uniforms: RIDGE_U,
     vertexShader: 'attribute float aT; varying float vT; void main(){ vT = aT; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
-    fragmentShader: 'uniform vec3 uHaze; varying float vT; void main(){ gl_FragColor = vec4(uHaze * vT, 1.0); }',
+    fragmentShader: 'uniform vec3 uHaze; uniform float uLift; varying float vT; void main(){ gl_FragColor = vec4(uHaze * mix(vT, 1.0, uLift), 1.0); }',
   });
   const layer = (R, base, amp, seed, tBottom, tTop) => {
     const segs = 420, pos = [], tt = [], idx = [];
@@ -997,7 +1042,8 @@ vmScene.add(vmFlame, vmFire, new THREE.HemisphereLight(0x1a2030, 0x080604, 0.12)
 // ---------------- scene assembly ----------------
 const sky = makeSky();
 const ridges = makeRidges();
-scene.add(sky, makeGround(), makeGrass(20000), ridges, makeDesertPlants(), makeCampfire());
+scene.add(sky, makeGround(), makeGrass(20000), ridges, makeDesertPlants());
+if (!WALK) scene.add(makeCampfire());
 const LANTERN_I = 9.5;
 const lanternLight = new THREE.PointLight(new THREE.Color(1.0, 0.82, 0.6), LANTERN_I, 40, 1.4);
 const fireLight = new THREE.PointLight(new THREE.Color(1.0, 0.52, 0.2), 9, 7.5, 2); // a campfire only lights the camp; the herd stays in the dark
@@ -1005,14 +1051,15 @@ fireLight.position.copy(FIRE_POS).add(new THREE.Vector3(0, 0.5, 0));
 const moon = new THREE.DirectionalLight(new THREE.Color(0.55, 0.62, 0.8), 0.05);
 moon.position.set(-20, 25, -45);
 const hemi = new THREE.HemisphereLight(0x0c1018, 0x040302, 0.05);
-scene.add(lanternLight, fireLight, moon, hemi);
+scene.add(moon, hemi);
+if (!WALK) scene.add(lanternLight, fireLight);
 makeTumbleweeds(scene);
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 const vmPass = new RenderPass(vmScene, vmCamera);
 vmPass.clear = false; vmPass.clearDepth = true;
-composer.addPass(vmPass);
+if (!WALK) composer.addPass(vmPass); // the hand and lantern
 const kuwaPass = new ShaderPass(KuwaharaShader);
 const bloom = new UnrealBloomPass(new THREE.Vector2(960, 540), 0.55, 0.3, 2.2);
 const mist = new UnrealBloomPass(new THREE.Vector2(960, 540), 0.025, 1.0, 0.0);
@@ -1091,8 +1138,8 @@ const endPointer = (e) => {
 canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
 addEventListener('keydown', (e) => {
   if (!started) return;
-  if (e.code === 'KeyF') { if (!e.repeat) lampAction(); return; }
-  if (e.code === 'Space') { raiseKey = true; e.preventDefault(); return; }
+  if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
+  if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
   keys.add(e.code);
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
 });
@@ -1132,6 +1179,10 @@ function cowStep(c, dt, time) {
   if (c.staring) {
     const [y, p] = lookAngles(c, camera.position);
     ai.yaw = damp(ai.yaw, y, 7, dt); ai.pitch = damp(ai.pitch, p, 7, dt);
+  } else if (c.alarm > 0.05) { // uneasy: head up, one eye on you
+    const [y] = lookAngles(c, camera.position);
+    ai.yaw = damp(ai.yaw, clamp(y, -0.6, 0.6), 3, dt); ai.pitch = damp(ai.pitch, -0.08, 3, dt);
+    ai.t = Math.min(ai.t, 1.5);
   } else {
     ai.t -= dt;
     if (ai.t <= 0) {
@@ -1141,7 +1192,8 @@ function cowStep(c, dt, time) {
     ai.yaw = damp(ai.yaw, ai.tYaw, 1.4, dt); ai.pitch = damp(ai.pitch, ai.tPitch, 1.1, dt);
   }
   const own = c.mesh.material.userData.own;
-  own.uPose.value.set(ai.yaw * 0.45, ai.pitch * 0.4, ai.yaw * 0.55, ai.pitch * 0.6);
+  const nod = (c.gait || 0) * 0.07 * Math.sin((c.gaitPhase || 0) * Math.PI * 4); // the head nods with each step
+  own.uPose.value.set(ai.yaw * 0.45, ai.pitch * 0.4 + nod, ai.yaw * 0.55, ai.pitch * 0.6 + nod * 0.5);
   ai.flick = Math.max(0, ai.flick - dt * 1.8);
   if (Math.random() < dt * 0.12) ai.flick = 1;
   own.uTail.value = 0.1 * Math.sin(time * 1.1 + c.phase) + 0.5 * ai.flick * Math.sin(time * 9 + c.phase);
@@ -1232,11 +1284,13 @@ function updateLampUI() {
   if (span.textContent !== label) span.textContent = label;
   ui.lampBtn.classList.toggle('dim', off && !canLight);
 }
-ui.lampBtn.addEventListener('click', (e) => { e.stopPropagation(); lampAction(); });
+if (ui.lampBtn) ui.lampBtn.addEventListener('click', (e) => { e.stopPropagation(); lampAction(); });
 const raiseDown = (e) => { e.preventDefault(); e.stopPropagation(); raiseTouch = true; };
 const raiseUp = (e) => { e.stopPropagation(); raiseTouch = false; };
-ui.raiseBtn.addEventListener('pointerdown', raiseDown);
-ui.raiseBtn.addEventListener('pointerup', raiseUp); ui.raiseBtn.addEventListener('pointercancel', raiseUp); ui.raiseBtn.addEventListener('pointerleave', raiseUp);
+if (ui.raiseBtn) {
+  ui.raiseBtn.addEventListener('pointerdown', raiseDown);
+  ui.raiseBtn.addEventListener('pointerup', raiseUp); ui.raiseBtn.addEventListener('pointercancel', raiseUp); ui.raiseBtn.addEventListener('pointerleave', raiseUp);
+}
 document.addEventListener('mousedown', (e) => { if (e.button === 2 && started) raiseMouse = true; });
 document.addEventListener('mouseup', (e) => { if (e.button === 2) raiseMouse = false; });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -1407,22 +1461,8 @@ function holdStep(dt, time, speed, bobA) {
   pend.lastRX = rx2; pend.lastRZ = rz2; pend.lastDVX = dvx; pend.lastDVZ = dvz;
 }
 
-// ---------------- frame loop ----------------
-const FRAME_MS = 1000 / 60;
-let nextDue = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, slow = 0, pendingResize = false;
-const fwd = new THREE.Vector3(), tmpV = new THREE.Vector3(), flameCam = new THREE.Vector3(), fireCam = new THREE.Vector3();
-const NIGHT = { fogC: new THREE.Color(0.062, 0.064, 0.073), fogD: 0.05, zen: new THREE.Color(0.0065, 0.007, 0.0088) };
-const DAY = { fogC: new THREE.Color(0.0035, 0.004, 0.0055), fogD: 0.009, hor: new THREE.Color(0.028, 0.03, 0.038), zen: new THREE.Color(0.002, 0.0022, 0.003) };
-function frame(now) {
-  if (!document.hidden) requestAnimationFrame(frame);
-  if (now < nextDue - 1) return;
-  nextDue = Math.max(nextDue + FRAME_MS, now + FRAME_MS * 0.6);
-  const dt = Math.min(0.1, (now - last) / 1000); last = now;
-  const time = now / 1000;
-  if (pendingResize) { pendingResize = false; resize(); }
-  U.uTime.value = time; FIRE_U.uTime.value = time; LU.uTime.value = time;
-
-  // walking
+// ---------------- moving yourself ----------------
+function movePlayer(dt) {
   let ix = 0, iz = 0;
   if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1;
   if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1;
@@ -1430,7 +1470,7 @@ function frame(now) {
   if (keys.has('KeyS') || keys.has('ArrowDown')) iz -= 1;
   ix += joy.x; iz -= joy.y;
   const im = Math.hypot(ix, iz); if (im > 1) { ix /= im; iz /= im; }
-  if (lamp.mode === 'relight') { ix *= 0.2; iz *= 0.2; }
+  if (!WALK && lamp.mode === 'relight') { ix *= 0.2; iz *= 0.2; }
   if (ended) { ix = iz = 0; }
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
   const wantX = (ix * cy - iz * sy) * 1.5, wantZ = (-ix * sy - iz * cy) * 1.5;
@@ -1447,6 +1487,27 @@ function frame(now) {
   camera.rotation.set(player.pitch, player.yaw, 0);
   camera.updateMatrixWorld(true);
   camera.getWorldDirection(fwd);
+  return speed;
+}
+
+// ---------------- frame loop ----------------
+const FRAME_MS = 1000 / 60;
+let nextDue = 0, last = performance.now(), fpsAcc = 0, fpsN = 0, slow = 0, pendingResize = false;
+const fwd = new THREE.Vector3(), tmpV = new THREE.Vector3(), flameCam = new THREE.Vector3(), fireCam = new THREE.Vector3();
+const NIGHT = { fogC: new THREE.Color(0.062, 0.064, 0.073), fogD: 0.05, zen: new THREE.Color(0.0065, 0.007, 0.0088) };
+const DAY = { fogC: new THREE.Color(0.0035, 0.004, 0.0055), fogD: 0.009, hor: new THREE.Color(0.028, 0.03, 0.038), zen: new THREE.Color(0.002, 0.0022, 0.003) };
+function frame(now) {
+  if (!document.hidden) requestAnimationFrame(frame);
+  if (now < nextDue - 1) return;
+  nextDue = Math.max(nextDue + FRAME_MS, now + FRAME_MS * 0.6);
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const time = now / 1000;
+  if (pendingResize) { pendingResize = false; resize(); }
+  U.uTime.value = time; FIRE_U.uTime.value = time; LU.uTime.value = time;
+
+  // walking
+  const speed = movePlayer(dt);
+  const bobA = clamp(speed / 1.5, 0, 1);
 
   // the lantern
   lampStep(dt);
@@ -1514,16 +1575,123 @@ function frame(now) {
     fpsAcc = 0; fpsN = 0;
   }
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden) { last = performance.now(); nextDue = 0; requestAnimationFrame(frame); sound.resume(); } });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) { last = performance.now(); nextDue = 0; requestAnimationFrame(WALK ? frameWalk : frame); sound.resume(); } });
+
+// ---------------- the walk slice: a sunny day, and a herd that moves away when you come close ----------------
+// temporary values to confirm: late-morning sun, flight zone 5 m, walking up to 1.3 m/s, gusts every 18-40 s
+const FLIGHT_R = 5.0, WALK_MAX = 1.3, STRIDE = 1.45;
+const DAYLOOK = {
+  hor: new THREE.Color(0.6, 0.57, 0.5), zen: new THREE.Color(0.13, 0.23, 0.45),
+  fog: new THREE.Color(0.55, 0.52, 0.46), fogD: 0.0055, haze: new THREE.Color(0.36, 0.37, 0.41), exp: 0.56,
+};
+let sun = null, windT = 12, gustLeft = 0;
+function setupDay() {
+  sun = new THREE.DirectionalLight(new THREE.Color(1.0, 0.93, 0.82), 6.0);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -18, right: 18, top: 18, bottom: -18, near: 1, far: 140 });
+  sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.03;
+  scene.add(sun, sun.target);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+  groundMesh.receiveShadow = true;
+  for (const t of tumbles) t.mesh.castShadow = true;
+  hemi.color.setRGB(0.55, 0.65, 0.85); hemi.groundColor.setRGB(0.32, 0.26, 0.19); hemi.intensity = 0.75;
+  moon.intensity = 0;
+  scene.fog.color.copy(DAYLOOK.fog); scene.fog.density = DAYLOOK.fogD;
+  sky.material.uniforms.uHor.value.copy(DAYLOOK.hor); sky.material.uniforms.uZen.value.copy(DAYLOOK.zen);
+  RIDGE_U.uHaze.value.copy(DAYLOOK.haze); RIDGE_U.uLift.value = 0.55;
+  U.uEyeGain.value = 0; U.uEyeSelf.value = 0;
+  finalPass.uniforms.uExp.value = DAYLOOK.exp;
+}
+function herdStep(dt) {
+  let cx = 0, cz = 0;
+  for (const c of cows) { cx += c.mesh.position.x; cz += c.mesh.position.z; }
+  cx /= cows.length; cz /= cows.length;
+  const pc = PLANT_U.uPC.value;
+  for (const c of cows) {
+    const p = c.mesh.position;
+    let vx = 0, vz = 0;
+    // you: inside its flight zone, a cow walks away from you, faster the closer you are
+    const dx = p.x - player.pos.x, dz = p.z - player.pos.z, d = Math.hypot(dx, dz);
+    const press = d < FLIGHT_R && d > 1e-3 ? (FLIGHT_R - d) / FLIGHT_R : 0;
+    if (press > 0) { vx += (dx / d) * press * 2.2; vz += (dz / d) * press * 2.2; }
+    c.alarm = Math.max(c.alarm - dt * 0.25, press); // stays uneasy for a few seconds
+    // the herd: drift back toward the others, keep a little space
+    const hx = cx - p.x, hz = cz - p.z, hd = Math.hypot(hx, hz);
+    if (hd > 6) { const k = 0.25 * Math.min(1, (hd - 6) / 6); vx += (hx / hd) * k; vz += (hz / hd) * k; }
+    for (const o of cows) {
+      if (o === c) continue;
+      const ex = p.x - o.mesh.position.x, ez = p.z - o.mesh.position.z, e = Math.hypot(ex, ez);
+      if (e < 2.2 && e > 1e-3) { const k = ((2.2 - e) / 2.2) * 0.9; vx += (ex / e) * k; vz += (ez / e) * k; }
+    }
+    // cactus: walk around it
+    for (const sg of SAGUAROS) {
+      const sx = sg.x + Math.round((pc.x - sg.x) / PLANT_PER) * PLANT_PER, sz = sg.z + Math.round((pc.y - sg.z) / PLANT_PER) * PLANT_PER;
+      const ex = p.x - sx, ez = p.z - sz, e = Math.hypot(ex, ez);
+      if (e < 1.8 && e > 1e-3) { const k = ((1.8 - e) / 1.8) * 1.2; vx += (ex / e) * k; vz += (ez / e) * k; }
+    }
+    const want = Math.hypot(vx, vz);
+    if (want > 0.15) {
+      let dh = Math.atan2(vx, vz) - c.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
+      c.heading += clamp(dh, -1.3 * dt, 1.3 * dt); // a cow turns, it doesn't slide sideways
+      c.speed = damp(c.speed, Math.min(WALK_MAX, want) * (0.3 + 0.7 * Math.max(0, Math.cos(dh))), 2.0, dt);
+    } else c.speed = damp(c.speed, 0, 1.5, dt);
+    p.x += Math.sin(c.heading) * c.speed * dt; p.z += Math.cos(c.heading) * c.speed * dt;
+    c.mesh.rotation.y = c.heading;
+    c.gait = damp(c.gait, clamp(c.speed / 0.9, 0, 1), 4, dt);
+    c.gaitPhase += (c.speed * dt) / STRIDE;
+    p.y = -0.012 * c.gait * (0.5 - 0.5 * Math.cos(c.gaitPhase * Math.PI * 4)); // the back dips twice a stride
+    c.mesh.material.userData.own.uGait.value.set(c.gaitPhase, c.gait, 0, 0);
+    c.mesh.updateMatrixWorld();
+    // the circles you bump into move with the body
+    const sh = Math.sin(c.heading), ch = Math.cos(c.heading);
+    [0.55, 0.0, -0.6].forEach((lz, k) => { const z = lz * 0.92 * c.s; c.blockers[k].x = p.x + sh * z; c.blockers[k].z = p.z + ch * z; });
+  }
+}
+function frameWalk(now) {
+  if (!document.hidden) requestAnimationFrame(frameWalk);
+  if (now < nextDue - 1) return;
+  nextDue = Math.max(nextDue + FRAME_MS, now + FRAME_MS * 0.6);
+  const dt = Math.min(0.1, (now - last) / 1000); last = now;
+  const time = now / 1000;
+  if (pendingResize) { pendingResize = false; resize(); }
+  U.uTime.value = time;
+  movePlayer(dt);
+  sun.target.position.set(player.pos.x, 0, player.pos.z);
+  sun.position.set(player.pos.x + 38, 46, player.pos.z + 30);
+  windT -= dt;
+  if (windT <= 0) { gustLeft = 2.3; windT = rand(18, 40); sound.gust(); }
+  gustLeft -= dt;
+  tumbleStep(dt, gustLeft > 0);
+  herdStep(dt);
+  for (const c of cows) cowStep(c, dt, time);
+  sound.update(camera.position, fwd, cows, time);
+  if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
+  finalPass.uniforms.uSeed.value = (now * 0.061) % 997;
+  composer.render(dt);
+  fpsAcc += dt; fpsN++;
+  if (fpsAcc >= 1) {
+    const fps = fpsN / fpsAcc;
+    ui.fps.textContent = `fps ${Math.round(fps)} · ${finalPass.uniforms.uRes.value.x}×${finalPass.uniforms.uRes.value.y}`;
+    slow = fps < 50 ? slow + 1 : 0;
+    if (slow >= 3) {
+      if (sun.castShadow) sun.castShadow = false; // first give up the shadows,
+      else if (target > 360) { target -= 60; pendingResize = true; } // then resolution
+      slow = 0;
+    }
+    fpsAcc = 0; fpsN = 0;
+  }
+}
 
 // ---------------- boot ----------------
 (async () => {
   try {
-    makeLantern();
-    makeArm();
+    if (!WALK) { makeLantern(); makeArm(); }
     let parts = 0;
-    const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / 4) * 100)}%`; };
-    const [geos] = await Promise.all([loadVariants(bump), loadHand().then(bump)]);
+    const total = WALK ? 3 : 4;
+    const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
+    const [geos] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump)]);
     HERD.forEach((h, i) => {
       const toCamp = Math.atan2(0 - h.x, 0.5 - h.z);
       const mesh = new THREE.Mesh(geos[h.v], cowMaterial(h.coat, h.face ?? h.coat, i * 1.7));
@@ -1536,19 +1704,25 @@ document.addEventListener('visibilitychange', () => { if (!document.hidden) { la
       cows.push({
         mesh, s: h.s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(),
         aimPoints: [new THREE.Vector3(0, 1.0, 0.0), new THREE.Vector3(0, 1.0, 0.6), new THREE.Vector3(0, 1.0, -0.6), new THREE.Vector3(0, 1.15, 1.1)],
+        heading: mesh.rotation.y, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0,
         ai: { t: rand(0, 3), yaw: rand(-0.4, 0.4), pitch: rand(-0.9, 0.0), tYaw: 0, tPitch: -0.5, flick: 0 },
       });
     });
+    if (WALK) {
+      setupDay();
+      for (const c of cows) { c.mesh.castShadow = true; c.mesh.receiveShadow = true; c.mesh.customDepthMaterial = cowDepthMaterial(c.mesh.material.userData.own); }
+    }
     for (const t of tumbles) spawnTumble(t, true);
     renderer.compile(scene, camera);
-    renderer.compile(vmScene, vmCamera);
+    if (!WALK) renderer.compile(vmScene, vmCamera);
     ui.loadTxt.textContent = TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
+      : WALK ? 'WASD 걷기 · 마우스 둘러보기'
       : WITH_COUNTING ? 'WASD 걷기 · 마우스 둘러보기 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
       : 'WASD 걷기 · 마우스 둘러보기 · 스페이스/오른쪽 클릭 랜턴 들기 · F 끄기와 불 붙이기';
     ui.startBtn.disabled = false; ui.startBtn.textContent = '시작';
     window.__ready = true;
     last = performance.now();
-    requestAnimationFrame(frame);
+    requestAnimationFrame(WALK ? frameWalk : frame);
   } catch (err) {
     console.error(err);
     ui.loadTxt.textContent = '불러오지 못했어요. 새로고침해 주세요.';
@@ -1584,6 +1758,7 @@ ui.startBtn.addEventListener('click', () => {
   document.body.classList.add('playing');
   enterFullscreen();
   try { sound.init(); } catch (e) { console.warn('sound', e); }
+  if (WALK && sound.ctx) { sound.silenceCrickets(); try { sound.fireP.disconnect(); } catch {} } // daytime: no crickets, no campfire
   tryLock();
   setTimeout(() => ui.hint.classList.add('gone'), 9000);
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
@@ -1595,6 +1770,7 @@ if (DEBUG) {
     state: () => ({ mode: lamp.mode, level: lamp.level, oil: lamp.oil, nightT, raiseT, count, countT, revealT, ended, sub: ui.sub.textContent, pos: player.pos.toArray() }),
     countAll: () => { countReadyAt = 0; for (const c of cows) c.lit = 2; },
     setCount: (n) => { count = n; },
+    herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2)]),
     tumbles: () => tumbles.map((t) => [+t.pos.x.toFixed(1), +t.pos.z.toFixed(1), +t.speed.toFixed(2)]),
     lightAt: (i) => lanternLightAt(cows[i].mesh.localToWorld(new THREE.Vector3(0, 1, 0))),
     goto: (x, z, yaw, pitch) => { player.pos.set(x, 0, z); player.yaw = yaw; player.pitch = pitch ?? 0; },

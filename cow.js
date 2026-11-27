@@ -200,6 +200,7 @@ export class Cow {
     for (const j of this.joints) l = smin(l, sph(lx - j[0], py - j[1], pz - j[2], j[3]), 0.02);
     for (const h of this.hooves) l = smin(l, ell(lx - h[0], py - h[1], pz - h[2], h[3], h[4], h[5]), 0.012);
     let d = smin(b, l, 0.07);
+    this._gL = l; this._gBd = b;
     this._gB = smin(d, ell(px, py - 0.64, pz + 0.58, 0.13, 0.08, 0.15), 0.12);
     this._gT = Math.min(this.tail(px, py, pz), ell(px, py - 0.52, pz + 1.045, 0.04, 0.11, 0.04));
     d = smin(d, this.tail(px, py, pz), 0.04);
@@ -246,6 +247,22 @@ export class Cow {
     const wNeck = Math.max(wHead, wNeckRaw * sstep(0.0, 0.75, tN));
     const wTail = sstep(-0.01, 0.025, Math.min(dB, dN) - dT) * clamp((1.22 - py) / 0.62, 0, 1);
     return [wNeck, wHead, wTail];
+  }
+
+  // skinning weights for walking: [leg (0 none, 1 front right, 2 front left, 3 hind right, 4 hind left), hip, knee]
+  // hip = follows the swing of the whole leg; knee = the part below the knee (front) or hock (hind) that folds on the step
+  legWeights(px, py, pz) {
+    this.evalBase(px, py, pz);
+    const b = this._gBd, l = this._gL;
+    const front = pz > 0;
+    const offMid = sstep(0.07, 0.11, Math.abs(px)); // udder and brisket on the midline stay with the body
+    const wLeg = sstep(-0.03, 0.05, b - l) * offMid;
+    const top = front ? 0.9 : 0.95;
+    const wHip = wLeg * sstep(top, top - 0.22, py);
+    const kneeY = front ? 0.45 : 0.52;
+    const wKnee = wHip * sstep(kneeY + 0.03, kneeY - 0.06, py);
+    const id = wHip > 0.002 ? (front ? 1 : 3) + (px > 0 ? 0 : 1) : 0;
+    return [id, wHip, wKnee];
   }
 
   // per-vertex material weights: [noseW, hoofW, dirtW, innerEar, eyeRing, faceMask]

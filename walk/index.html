@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Night Herd · 걷기 슬라이스</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Nanum+Myeongjo:wght@400;700&display=swap" rel="stylesheet">
+<style>
+/* VOICE: quiet and dry; a working cowboy with his herd under the sun
+   IDEA: walk toward the cattle and they walk away from you
+   PICTURE: the live 3D Sonoran desert at late morning
+   COLOUR and TYPE: bone white on dark glass, Nanum Myeongjo
+   LAYOUT: full-bleed stage, fullscreen top-left, subtitles low centre */
+:root{color-scheme:dark;--bg:#050506;--ink:#e6e1d6;--dim:rgba(230,225,214,.62)}
+:root[data-theme=light],:root[data-theme=dark]{color-scheme:dark}
+*{box-sizing:border-box;min-width:0}
+html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);overflow:hidden;font:16px/1.5 "Nanum Myeongjo",serif;-webkit-user-select:none;user-select:none}
+#stage{position:fixed;inset:0}
+#stage canvas{display:block;width:100%;height:100%;touch-action:none}
+#fps{position:fixed;top:10px;right:14px;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;pointer-events:none;text-shadow:0 1px 4px #000}
+#start{position:fixed;inset:0;display:grid;place-items:center;background:rgba(5,5,6,.82);transition:opacity .9s;z-index:5}
+#start.gone{opacity:0;pointer-events:none}
+.card{text-align:center;padding:24px;max-width:520px}
+.card h1{margin:0 0 6px;font-size:clamp(34px,6vw,48px);line-height:1.05;font-weight:700}
+.card .sub{margin:0 0 22px;color:var(--dim);font-size:15px}
+#loadTxt{margin:0 0 22px;color:var(--dim);font-size:15px;min-height:1.5em}
+.btn{min-height:48px;padding:10px 22px;border:1px solid rgba(230,225,214,.5);border-radius:999px;background:rgba(5,5,6,.55);color:var(--ink);font:700 16px "Nanum Myeongjo",serif;cursor:pointer;touch-action:none}
+.btn:hover{border-color:rgba(230,225,214,.85)}
+.btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+.btn:disabled{opacity:.5;cursor:default}
+.btn.dim{opacity:.45}
+#hint{position:fixed;left:50%;top:16%;transform:translateX(-50%);margin:0;padding:0 16px;font-size:15px;color:var(--dim);pointer-events:none;transition:opacity 1.2s;text-align:center;text-shadow:0 1px 6px #000;opacity:0}
+body.playing #hint{opacity:1}
+body.playing #hint.gone{opacity:0}
+#sub,#prompt{position:fixed;left:50%;transform:translateX(-50%);margin:0;color:var(--ink);opacity:0;transition:opacity .5s;pointer-events:none;text-shadow:0 2px 10px #000;white-space:nowrap}
+#sub{bottom:max(92px,14vh);font-size:clamp(17px,2.4vw,22px)}
+#prompt{bottom:max(140px,22vh);font-size:16px;letter-spacing:.02em}
+#sub.show,#prompt.show{opacity:1}
+.pad{position:fixed;right:max(16px,3vw);bottom:max(16px,3vh);display:none;flex-direction:column;align-items:flex-end;gap:10px;z-index:3}
+body.playing.touch .pad{display:flex}
+.pad .btn{display:flex;align-items:center;gap:8px}
+.pad svg{width:20px;height:20px;flex:none}
+#joy{position:fixed;width:112px;height:112px;margin:0;border:1.5px solid rgba(230,225,214,.45);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;opacity:0;transition:opacity .15s;z-index:2}
+#joy.show{opacity:1}
+#knob{position:absolute;left:50%;top:50%;width:46px;height:46px;border-radius:50%;background:rgba(230,225,214,.35);transform:translate(-50%,-50%)}
+#resume{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);display:none;z-index:4}
+#resume.show{display:block}
+#fsBtn{position:fixed;top:8px;left:10px;width:44px;height:44px;display:none;place-items:center;padding:0;border:1px solid rgba(230,225,214,.35);border-radius:10px;background:rgba(5,5,6,.45);color:var(--ink);cursor:pointer;z-index:4}
+body.playing #fsBtn{display:grid}
+#fsBtn[hidden]{display:none!important}
+#fsBtn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
+#fsBtn svg{width:20px;height:20px}
+#fsBtn .out{display:none}
+#fsBtn[aria-pressed=true] .in{display:none}
+#fsBtn[aria-pressed=true] .out{display:inline}
+#turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
+body.portrait #turn{display:block}
+@media (prefers-reduced-motion: reduce){#start,#hint,#sub,#prompt{transition:none}}
+</style>
+</head>
+<body>
+<div id="stage"></div>
+<div id="fps">fps –</div>
+<button id="fsBtn" type="button" aria-label="전체화면" aria-pressed="false" hidden>
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="in"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></g><g class="out"><path d="M9 4v5H4"/><path d="M15 4v5h5"/><path d="M9 20v-5H4"/><path d="M15 20v-5h5"/></g></svg>
+</button>
+<p id="turn">가로로 돌리면 더 넓게 보여요</p>
+<p id="hint">소에게 다가가면 소가 피해서 걸어가요. 소떼를 원하는 쪽으로 몰아 보세요</p>
+<p id="sub" aria-live="polite"></p>
+<div id="joy"><div id="knob"></div></div>
+<button id="resume" class="btn" type="button">클릭해서 계속</button>
+<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">걷기 슬라이스 · 낮</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button></div></div>
+<script>if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch');</script>
+<script src="walk.js"></script>
+</body>
+</html>

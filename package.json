@@ -5,12 +5,13 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "bake:cows": "node gen-slice.mjs && mkdir -p lantern/cows && cp slice/cows/*.json lantern/cows/",
+    "bake:cows": "node gen-slice.mjs 0.012 slice/cows && mkdir -p lantern/cows walk/cows && cp slice/cows/*.json lantern/cows/ && cp slice/cows/*.json walk/cows/",
     "bake:hand": "node gen-hand.mjs 0.0016 && cp lantern/hand.json slice/hand.json",
-    "build:slice": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=true --outfile=slice/slice.js",
-    "build:lantern": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --outfile=lantern/lantern.js",
-    "build": "npm run build:slice && npm run build:lantern",
-    "serve": "python3 -m http.server 8000"
+    "build:slice": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=true --define:WALK=false --outfile=slice/slice.js",
+    "build:lantern": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --define:WALK=false --outfile=lantern/lantern.js",
+    "build": "npm run build:slice && npm run build:lantern && npm run build:walk",
+    "serve": "python3 -m http.server 8000",
+    "build:walk": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_COUNTING=false --define:WALK=true --outfile=walk/walk.js"
   },
   "dependencies": {
     "three": "^0.187.0"
