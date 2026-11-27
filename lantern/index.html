@@ -39,6 +39,8 @@ body.playing #hint.gone{opacity:0}
 #prompt{bottom:max(140px,22vh);font-size:16px;letter-spacing:.02em}
 #sub.show,#prompt.show{opacity:1}
 .pad{position:fixed;right:max(16px,3vw);bottom:max(16px,3vh);display:none;flex-direction:column;align-items:flex-end;gap:10px;z-index:3}
+.pad.left{left:max(16px,3vw);right:auto;align-items:flex-start}
+#fireBtn{min-height:64px;padding:12px 26px;font-size:18px}
 body.playing.touch .pad{display:flex}
 .pad .btn{display:flex;align-items:center;gap:8px}
 .pad svg{width:20px;height:20px;flex:none}
@@ -67,15 +69,23 @@ body.portrait #turn{display:block}
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="in"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></g><g class="out"><path d="M9 4v5H4"/><path d="M15 4v5h5"/><path d="M9 20v-5H4"/><path d="M15 20v-5h5"/></g></svg>
 </button>
 <p id="turn">가로로 돌리면 더 넓게 보여요</p>
-<p id="hint">랜턴은 바람에 꺼지기도 하고, 기름이 떨어지면 꺼져요. 다시 켜려면 모닥불로 가세요</p>
+<p id="hint">랜턴은 왼손, 리볼버는 오른손이에요. 공이치기를 젖혀야 쏠 수 있고, 탄은 다섯 발뿐이에요</p>
 <p id="prompt" aria-live="polite"></p>
 <p id="sub" aria-live="polite"></p>
-<div class="pad">
+<div class="pad left">
   <button id="raiseBtn" class="btn" type="button" aria-label="랜턴 들기 (누르고 있기)">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 19V5"/><path d="M6 11l6-6 6 6"/></svg><span>들기</span>
   </button>
   <button id="lampBtn" class="btn" type="button">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 4.5a3 3 0 0 1 6 0"/><path d="M8 6.5h8"/><path d="M8.5 6.5 7.5 18h9l-1-11.5"/><path d="M7 18h10v2H7z"/></svg><span>랜턴 끄기</span>
+  </button>
+</div>
+<div class="pad">
+  <button id="cockBtn" class="btn" type="button" aria-label="공이치기 젖히기">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17a7 7 0 1 1 10 0"/><path d="M17 17v-4h-4"/></svg><span>공이치기</span>
+  </button>
+  <button id="fireBtn" class="btn" type="button" aria-label="쏘기">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>쏘기</span>
   </button>
 </div>
 <div id="joy"><div id="knob"></div></div>

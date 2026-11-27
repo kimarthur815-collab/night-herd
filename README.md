@@ -49,6 +49,8 @@ npm run serve
 | `gen-hand.mjs` | 손을 구워서 `lantern/hand.json`에 저장해요. (`npm run bake:hand`는 `slice/`에도 복사해요) |
 | `game-src.js` | 두 슬라이스의 코드 전부 (환경, 소, 쿠와하라, 소리, 이동, 손과 랜턴, 세기, 엔딩). `WITH_COUNTING`과 `WALK` 값으로 첫 슬라이스, 랜턴 슬라이스, 걷기 슬라이스를 따로 빌드해요. |
 | `plants-sdf.js`, `gen-plants.mjs` | 사와로 다섯 종류와 소 뼈(머리뼈, 아래턱, 등뼈, 넓적다리뼈, 골반, 어깨뼈)를 거리 함수로 만들고 구워요. 가까이·중간·멀리 세 단계 메시와 가시 자리까지 같이 구워요. |
+| `revolver.js` | 콜트 싱글 액션 아미(피스메이커): 청색 처리한 총신과 실린더, 바랜 표면경화 프레임, 호두나무 손잡이. 공이치기·방아쇠·실린더가 움직여요 |
+| `gunhand.js`, `gen-gunhand.mjs` | 리볼버를 쥔 오른손(장갑)과 따로 움직이는 엄지를 구워서 `lantern/`에 저장해요 |
 | `plants.js` | 사막 식물과 죽은 것들 전부: 사와로(가까운 것엔 가시 하나하나), 오코틸로, 크레오소트, 버세이지, 마른 풀, 회전초, 쓰러진 사와로 뼈대, 소 뼈. 배치, 거리별 단계, 바람에 흔들림 |
 | `sculptview.html`, `sculptview-src.js` | 구운 조각 하나를 네 방향에서 보는 개발용 화면 (`npm run sculptview` 후 `sculptview.html?f=plants/data/bone-skull.json`) |
 | `index.html` | 첫 화면. 두 슬라이스로 가는 링크 |
@@ -61,5 +63,6 @@ npm run serve
 npm run bake:cows    # 소 메시 굽기 (몇 분 걸림)
 npm run bake:hand    # 손 메시 굽기
 npm run bake:plants  # 사와로와 뼈 굽기 (1~2분), 세 슬라이스 폴더의 plants/로 복사
+npm run bake:gunhand # 리볼버 쥔 손 굽기
 npm run build        # 두 슬라이스의 JS 번들 만들기
 ```

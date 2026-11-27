@@ -10,9 +10,11 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fbm } from './cow.js';
+import { makeRevolver, CYL_AXIS_Y, MUZZLE_Z } from './revolver.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 
 const DEBUG = location.hash === '#debug';
+const GUN = !WALK && !WITH_COUNTING; // the lantern slice: lantern in the left hand, revolver in the right, standing by the fire
 THREE.ShaderChunk.lights_pars_begin = THREE.ShaderChunk.lights_pars_begin.replace(
   'float distanceFalloff = 1.0 / max( pow( lightDistance, decayExponent ), 0.01 );',
   'float distanceFalloff = 1.0 / pow( sqrt( lightDistance * lightDistance + 0.81 ), decayExponent );');
@@ -50,7 +52,7 @@ const NUM = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여�
 const ui = {
   start: $('start'), startBtn: $('startBtn'), loadTxt: $('loadTxt'), sub: $('sub'), joy: $('joy'), knob: $('knob'),
   fps: $('fps'), hint: $('hint'), resume: $('resume'), prompt: $('prompt'), lampBtn: $('lampBtn'), raiseBtn: $('raiseBtn'),
-  end: $('end'), again: $('again'), fsBtn: $('fsBtn'),
+  end: $('end'), again: $('again'), fsBtn: $('fsBtn'), cockBtn: $('cockBtn'), fireBtn: $('fireBtn'),
 };
 let renderer;
 try {
@@ -652,6 +654,44 @@ class LanternSound extends Sound {
     o.connect(f).connect(g).connect(this.master); o.start(t); o.stop(t + 0.14);
   }
   sputter() { this.burst('highpass', rand(1500, 3000), 0.8, 0.05, 0.04); }
+  // a single metallic tick, as a hammer or a pawl makes
+  tick(at, freq, gain) {
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime + at, s = this.ctx.createBufferSource(), f = this.ctx.createBiquadFilter(), g = this.ctx.createGain();
+    s.buffer = this.noise; f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = 3;
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.002); g.gain.exponentialRampToValueAtTime(0.0005, t + 0.035);
+    s.connect(f).connect(g).connect(this.master); s.start(t, Math.random() * 1.5, 0.05);
+  }
+  // drawing the hammer of a Colt back: four clicks, the last one solid
+  cock() { [[0, 3800, 0.05], [0.05, 3400, 0.06], [0.11, 3000, 0.07], [0.2, 2200, 0.14]].forEach(([a, f, g]) => this.tick(a, f, g)); }
+  dry() { this.tick(0, 1800, 0.2); this.tick(0.004, 4200, 0.08); }
+  gunshot() {
+    if (!this.ctx) return;
+    const ctx = this.ctx, t = ctx.currentTime;
+    const crack = ctx.createBufferSource(), cf = ctx.createBiquadFilter(), cg = ctx.createGain();
+    crack.buffer = this.noise; cf.type = 'lowpass'; cf.frequency.setValueAtTime(9000, t); cf.frequency.exponentialRampToValueAtTime(380, t + 0.3);
+    cg.gain.setValueAtTime(0, t); cg.gain.linearRampToValueAtTime(1.0, t + 0.002); cg.gain.exponentialRampToValueAtTime(0.001, t + 0.7);
+    crack.connect(cf).connect(cg).connect(this.master); crack.start(t, Math.random() * 1.5, 0.8);
+    const o = ctx.createOscillator(), og = ctx.createGain(); // the thump in your chest
+    o.frequency.setValueAtTime(120, t); o.frequency.exponentialRampToValueAtTime(36, t + 0.2);
+    og.gain.setValueAtTime(0.8, t); og.gain.exponentialRampToValueAtTime(0.001, t + 0.32);
+    o.connect(og).connect(this.master); o.start(t); o.stop(t + 0.34);
+    // rolling back off the hills, quieter and duller each time
+    for (const [d, a, fr] of [[0.42, 0.2, 1700], [0.78, 0.13, 1200], [1.25, 0.085, 850], [1.9, 0.05, 600]]) {
+      const e = ctx.createBufferSource(), ef = ctx.createBiquadFilter(), eg = ctx.createGain();
+      e.buffer = this.noise; ef.type = 'lowpass'; ef.frequency.value = fr;
+      eg.gain.setValueAtTime(0, t + d); eg.gain.linearRampToValueAtTime(a, t + d + 0.03); eg.gain.exponentialRampToValueAtTime(0.0006, t + d + 1.1);
+      e.connect(ef).connect(eg).connect(this.master); e.start(t + d, Math.random() * 1.5, 1.2);
+    }
+  }
+  thud(gain = 0.5) {
+    this.burst('lowpass', 160, 0.7, gain, 0.45, 0.004);
+    if (!this.ctx) return;
+    const t = this.ctx.currentTime, o = this.ctx.createOscillator(), g = this.ctx.createGain();
+    o.frequency.setValueAtTime(70, t); o.frequency.exponentialRampToValueAtTime(30, t + 0.25);
+    g.gain.setValueAtTime(gain * 0.8, t); g.gain.exponentialRampToValueAtTime(0.001, t + 0.3);
+    o.connect(g).connect(this.master); o.start(t); o.stop(t + 0.32);
+  }
   setHiss(level) { if (this.hiss) this.hiss.gain.value = 0.006 * level; }
 }
 const sound = new LanternSound();
@@ -660,6 +700,7 @@ const sound = new LanternSound();
 const vmScene = new THREE.Scene();
 const vmCamera = new THREE.PerspectiveCamera(70, 16 / 9, 0.01, 10);
 const VM_SCALE = 0.85;
+const MX = -1; // the lantern is held in the left hand: its poses are the right hand's, mirrored
 const handPivot = new THREE.Group(); // origin = centre of the bail grip
 handPivot.scale.setScalar(VM_SCALE);
 vmScene.add(handPivot);
@@ -789,15 +830,24 @@ function woolMaterial() {
   return m;
 }
 const ARM = {
-  wristLocal: new THREE.Vector3(0.0208, 0.0162, 0.1410), // the wrist joint in glove space (metres)
-  wristAxis: new THREE.Vector3(0.3384, -0.3644, 0.8676), // the direction the glove's wrist points
-  shoulder: new THREE.Vector3(0.26, -0.3, 0.02), // camera space
+  wristLocal: new THREE.Vector3(0.0208 * MX, 0.0162, 0.1410), // the wrist joint in glove space (metres)
+  wristAxis: new THREE.Vector3(0.3384 * MX, -0.3644, 0.8676), // the direction the glove's wrist points
+  shoulder: new THREE.Vector3(0.26 * MX, -0.3, 0.02), // camera space
   fore: 0.26 * VM_SCALE, upper: 0.29 * VM_SCALE,
+  pole: new THREE.Vector3(0.75 * MX, -0.65, 0.1).normalize(),
+};
+// the right arm, holding the revolver (its glove is built in the gun's own frame)
+const GARM = {
+  wristLocal: new THREE.Vector3(0.0277, -0.1049, 0.1348), wristAxis: new THREE.Vector3(0.2376, -0.329, 0.9137),
+  shoulder: new THREE.Vector3(0.24, -0.31, 0.04), fore: 0.26 * VM_SCALE, upper: 0.29 * VM_SCALE,
   pole: new THREE.Vector3(0.75, -0.65, 0.1).normalize(),
 };
-const arm = { root: new THREE.Group(), W: new THREE.Vector3(), E: new THREE.Vector3(), f: new THREE.Vector3(), u: new THREE.Vector3() };
-vmScene.add(arm.root);
-function makeArm() {
+let arm = null, armR = null;
+function makeArm() { arm = makeArmRig(ARM, handPivot); }
+function makeArmRig(P, pivot) {
+  const rig = { P, pivot, root: new THREE.Group(), W: new THREE.Vector3(), E: new THREE.Vector3(), f: new THREE.Vector3(), u: new THREE.Vector3() };
+  vmScene.add(rig.root);
+  const arm = rig;
   const wool = woolMaterial();
   const L = 0.26 + 0.03;
   const prof = [[0.0355, -0.0115], [0.041, -0.0135], [0.0448, -0.0095], [0.0462, -0.002], [0.0456, 0.008], [0.044, 0.015]];
@@ -810,9 +860,11 @@ function makeArm() {
   const ug = new THREE.CylinderGeometry(0.06, 0.052, upLen, 28, 24, true); ug.translate(0, upLen / 2, 0);
   arm.up = new THREE.Mesh(ug, wool);
   for (const o of [arm.fore, arm.elbow, arm.up]) { o.scale.setScalar(VM_SCALE); arm.root.add(o); }
+  return rig;
 }
 const _ax = new THREE.Vector3(), _px = new THREE.Vector3(), _pz = new THREE.Vector3(), _hx = new THREE.Vector3(), _m4 = new THREE.Matrix4(), _q = new THREE.Quaternion(), _qi = new THREE.Quaternion();
-function solveArm() {
+function solveArm(arm) {
+  const ARM = arm.P, handPivot = arm.pivot;
   arm.W.copy(ARM.wristLocal); handPivot.localToWorld(arm.W);
   _ax.subVectors(ARM.shoulder, arm.W);
   let d = _ax.length(); _ax.divideScalar(d);
@@ -826,9 +878,10 @@ function solveArm() {
 }
 // bend the wrist part of the way toward the forearm so the glove always sits in the sleeve
 const _up = new THREE.Vector3();
-function alignWrist(k, upCam) {
+function alignWrist(arm, k, upCam) {
+  const ARM = arm.P, handPivot = arm.pivot;
   for (let it = 0; it < 2; it++) {
-    solveArm();
+    solveArm(arm);
     _hx.copy(ARM.wristAxis).transformDirection(handPivot.matrixWorld);
     _q.setFromUnitVectors(_hx, arm.f); _qi.identity().slerp(_q, k);
     handPivot.quaternion.premultiply(_qi);
@@ -839,9 +892,10 @@ function alignWrist(k, upCam) {
     handPivot.quaternion.premultiply(_q);
     handPivot.updateMatrixWorld(true);
   }
-  solveArm();
+  solveArm(arm);
 }
-function placeArm() {
+function placeArm(arm) {
+  const ARM = arm.P, handPivot = arm.pivot;
   // the sleeve frame: y along the forearm, x close to the glove's knuckle line
   _hx.set(1, 0, 0).transformDirection(handPivot.matrixWorld);
   _px.copy(_hx).addScaledVector(arm.f, -_hx.dot(arm.f)).normalize();
@@ -854,8 +908,7 @@ function placeArm() {
   _m4.makeBasis(_hx, arm.u, _pz);
   arm.up.quaternion.setFromRotationMatrix(_m4); arm.up.position.copy(arm.E);
 }
-async function loadHand() {
-  const j = await (await fetch('hand.json')).json();
+function parseHand(j, mirror) {
   const raw = atob(j.data), u8 = new Uint8Array(raw.length);
   for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
   const buf = u8.buffer, vc = j.vc, ic = j.ic;
@@ -866,19 +919,192 @@ async function loadHand() {
   const nrm = new Int8Array(buf, o, vc * 3); o += vc * 3;
   const att = new Uint8Array(buf, o, vc * 2);
   const pos = new Float32Array(vc * 3); for (let i = 0; i < vc * 3; i++) pos[i] = p16[i] * j.ps;
+  const n8 = new Int8Array(nrm), ix = j.i32 ? new Uint32Array(idx) : new Uint16Array(idx);
+  if (mirror) { // a right glove becomes a left one: flip x, and the winding with it
+    for (let i = 0; i < vc; i++) { pos[3 * i] = -pos[3 * i]; n8[3 * i] = -n8[3 * i]; }
+    for (let t = 0; t < ix.length; t += 3) { const k = ix[t + 1]; ix[t + 1] = ix[t + 2]; ix[t + 2] = k; }
+  }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  g.setAttribute('normal', new THREE.BufferAttribute(new Int8Array(nrm), 3, true));
+  g.setAttribute('normal', new THREE.BufferAttribute(n8, 3, true));
   g.setAttribute('aAtt', new THREE.BufferAttribute(new Uint8Array(att), 2, true));
-  g.setIndex(new THREE.BufferAttribute(j.i32 ? new Uint32Array(idx) : new Uint16Array(idx), 1));
+  g.setIndex(new THREE.BufferAttribute(ix, 1));
   g.computeBoundingSphere();
-  const mesh = new THREE.Mesh(g, handMaterial());
-  handPivot.add(mesh);
+  return g;
 }
+async function loadHand() {
+  const j = await (await fetch('hand.json')).json();
+  handPivot.add(new THREE.Mesh(parseHand(j, MX < 0), handMaterial()));
+}
+// ---------------- the revolver in the right hand ----------------
+// temporary: five rounds and no reloading yet; right click (or E) draws the hammer back, left click fires
+const gunPivot = new THREE.Group(); gunPivot.scale.setScalar(VM_SCALE);
+const gun = { chambers: [false, true, true, true, true, true], top: 0, from: 0, mode: 'idle', t: 0, kick: 9, thumb: 0, aim: 0, shots: 0 };
+let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null;
+const GUN_TURN = { yaw: 0.5, roll: 0.18, aimD: 5 };
+const GUN_HOLD = new THREE.Vector3(0.14, -0.11, -0.29), _gm = new THREE.Matrix4(), _ga = new THREE.Vector3(), _gq = new THREE.Quaternion(), _gup = new THREE.Vector3(0, 1, 0);
+function glowTexture(spikes) {
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d'), grd = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grd.addColorStop(0, 'rgba(255,255,255,1)'); grd.addColorStop(0.25, 'rgba(255,255,255,0.45)'); grd.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 128, 128);
+  if (spikes) { g.globalCompositeOperation = 'lighter'; g.fillStyle = 'rgba(255,255,255,0.5)'; for (let i = 0; i < 7; i++) { g.save(); g.translate(64, 64); g.rotate((i / 7) * Math.PI * 2 + Math.random() * 0.4); g.beginPath(); g.moveTo(0, -5); g.lineTo(60, 0); g.lineTo(0, 5); g.fill(); g.restore(); } }
+  return new THREE.CanvasTexture(c);
+}
+function makeGun() {
+  rev = makeRevolver();
+  gunPivot.add(rev.group);
+  vmScene.add(gunPivot);
+  flashV = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(true), color: new THREE.Color(1.0, 0.8, 0.5), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
+  flashV.position.set(0, 0, MUZZLE_Z - 0.035); flashV.scale.setScalar(0.16); flashV.visible = false; flashV.renderOrder = 5;
+  gunPivot.add(flashV);
+  vmFlash = new THREE.PointLight(new THREE.Color(1.0, 0.75, 0.45), 0, 2.5, 2); vmScene.add(vmFlash);
+  muzzleLight = new THREE.PointLight(new THREE.Color(1.0, 0.8, 0.55), 0, 45, 1.5); scene.add(muzzleLight);
+  armR = makeArmRig(GARM, gunPivot);
+}
+async function loadGunHand() {
+  const [h, t] = await Promise.all(['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(f)).json()));
+  const mat = handMaterial();
+  gunPivot.add(new THREE.Mesh(parseHand(h, false), mat));
+  thumbPivot = new THREE.Group(); thumbPivot.position.fromArray(t.origin); gunPivot.add(thumbPivot);
+  thumbPivot.add(new THREE.Mesh(parseHand(t, false), mat));
+}
+function cockGun() {
+  if (!started || !GUN || gun.mode !== 'idle') return;
+  gun.mode = 'cocking'; gun.t = 0; gun.from = gun.top; gun.top = (gun.top + 1) % 6;
+  sound.cock();
+}
+function fireGun() {
+  if (!started || !GUN) return;
+  if (gun.mode !== 'cocked') return;
+  gun.mode = 'firing'; gun.t = 0;
+  if (gun.chambers[gun.top]) { gun.chambers[gun.top] = false; rev.bullets[gun.top].visible = false; shoot(); }
+  else sound.dry();
+}
+const kickAt = (t) => (t < 0.025 ? t / 0.025 : Math.exp(-(t - 0.025) / 0.11) * (1 + 0.15 * Math.sin((t - 0.025) * 30) * Math.exp(-(t - 0.025) / 0.05)));
+function gunStep(dt, time) {
+  gun.t += dt; gun.kick += dt;
+  let cock = 0, trig = 0, cyl = -gun.top * (Math.PI / 3);
+  if (gun.mode === 'cocking') {
+    cock = smooth(clamp((gun.t - 0.07) / 0.2, 0, 1));
+    const turn = smooth(clamp((gun.t - 0.1) / 0.16, 0, 1));
+    cyl = -(gun.from + turn) * (Math.PI / 3);
+    if (gun.t > 0.3) { gun.mode = 'cocked'; gun.t = 0; }
+  } else if (gun.mode === 'cocked') { cock = 1; trig = 0.35; }
+  else if (gun.mode === 'firing') {
+    cock = 1 - clamp(gun.t / 0.02, 0, 1);
+    trig = gun.t < 0.12 ? 1 : 1 - smooth(clamp((gun.t - 0.12) / 0.15, 0, 1));
+    if (gun.t > 0.3) { gun.mode = 'idle'; gun.t = 0; }
+  }
+  // the thumb reaches up onto the spur while cocking, then comes back down
+  gun.thumb = damp(gun.thumb, gun.mode === 'cocking' && gun.t < 0.27 ? 1 : 0, gun.mode === 'cocking' ? 22 : 9, dt);
+  gun.aim = damp(gun.aim, gun.mode === 'idle' && gun.t > 2.5 ? 0 : 1, 4, dt); // a little lower when you aren't about to shoot
+  rev.hamPivot.rotation.x = 0.8 * cock;
+  rev.trigPivot.rotation.x = 0.22 * trig;
+  rev.cyl.rotation.z = cyl;
+  if (thumbPivot) thumbPivot.rotation.set(0.55 * gun.thumb, -0.25 * gun.thumb, 0.35 * gun.thumb);
+  // where it points: the middle of the view, a little below it at ease
+  const k = kickAt(gun.kick);
+  const p = vA.copy(GUN_HOLD);
+  p.y += 0.02 * gun.aim - 0.012 * (1 - gun.aim) + 0.014 * k; p.z += 0.04 * k;
+  p.x -= lagX * 0.45; p.y += lagY * 0.45;
+  p.x += Math.sin(time * 0.31 + 1.0) * 0.0012 + Math.sin(time * 9.7) * Math.sin(time * 5.3) * 0.0005;
+  p.y += Math.sin(time * 0.27 + 2.0) * 0.0012 + Math.sin(time * 1.3) * 0.0008; // breathing
+  _ga.set(0, -0.7 * (1 - gun.aim), -GUN_TURN.aimD);
+  _gm.lookAt(p, _ga, _gup); gunPivot.quaternion.setFromRotationMatrix(_gm);
+  // turned in a little and canted, so you see the side of it: the cylinder and the hammer
+  gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(0.42 * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
+  gunPivot.position.copy(p);
+  gunPivot.updateMatrixWorld(true);
+  solveArm(armR); placeArm(armR);
+  // the muzzle flash lights the hands, then the world, for a moment
+  const f = Math.max(0, 1 - gun.kick / 0.06);
+  flashV.visible = f > 0; flashV.material.rotation = gun.shots * 1.7; flashV.scale.setScalar(0.12 + 0.08 * f);
+  _ga.set(0, 0, MUZZLE_Z - 0.04); gunPivot.localToWorld(_ga);
+  vmFlash.position.copy(_ga); vmFlash.intensity = 30 * f;
+  muzzleLight.position.copy(_ga).applyQuaternion(camera.quaternion).add(camera.position);
+  muzzleLight.intensity = 140 * f * f;
+}
+// a shot: the bang, the flash and the smoke, and whatever the bullet finds
+const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _rc = new THREE.Vector3();
+function raySphere(o, d, c, r) { const ox = o.x - c.x, oy = o.y - c.y, oz = o.z - c.z, b = ox * d.x + oy * d.y + oz * d.z, cc = ox * ox + oy * oy + oz * oz - r * r, h = b * b - cc; if (h < 0) return Infinity; const t = -b - Math.sqrt(h); return t > 0 ? t : Infinity; }
+function shoot() {
+  gun.kick = 0; gun.shots++;
+  sound.gunshot();
+  _ro.copy(camera.position);
+  _rd.copy(fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
+  let best = Infinity, hit = null;
+  for (const c of cows) {
+    if (c.dead) continue;
+    for (const b of c.blockers) { const t = raySphere(_ro, _rd, _rc.set(b.x, 0.95 * c.s, b.z), 0.43 * c.s); if (t < best) { best = t; hit = c; } }
+    const t = raySphere(_ro, _rd, _rc.set(c.headWorld.x, c.headWorld.y, c.headWorld.z), 0.24 * c.s); if (t < best) { best = t; hit = c; }
+  }
+  const tg = _rd.y < -1e-3 ? -_ro.y / _rd.y : Infinity;
+  if (hit && best < tg && best < 80) killCow(hit, _rd);
+  else if (tg < 70) puff(_rc.copy(_ro).addScaledVector(_rd, tg), 0.6, [0.16, 0.13, 0.1]);
+  _ga.set(0, 0, MUZZLE_Z - 0.06); gunPivot.localToWorld(_ga); _ga.applyQuaternion(camera.quaternion).add(camera.position);
+  for (let i = 0; i < 4; i++) puff(_ga, 1.3, [0.55, 0.54, 0.52], _rd);
+  // every cow hears it
+  for (const c of cows) if (!c.dead) { const d = Math.hypot(c.mesh.position.x - player.pos.x, c.mesh.position.z - player.pos.z); c.startle = Math.max(c.startle || 0, clamp(1.3 - d / 30, 0.3, 1)); }
+}
+// black-powder smoke and dust: soft sprites that grow, drift and fade
+const puffs = [];
+let puffTex = null;
+function puff(at, size, col, dir) {
+  if (!puffTex) puffTex = glowTexture(false);
+  let pf = puffs.find((q) => q.life <= 0);
+  if (!pf) { pf = { sp: new THREE.Sprite(new THREE.SpriteMaterial({ map: puffTex, transparent: true, depthWrite: false })), life: 0 }; scene.add(pf.sp); puffs.push(pf); }
+  pf.life = pf.max = size > 1 ? rand(1.8, 2.6) : 0.7; pf.size = size; pf.col = col;
+  pf.sp.position.copy(at); pf.v = new THREE.Vector3((Math.random() - 0.5) * 0.4, 0.25 + Math.random() * 0.2, (Math.random() - 0.5) * 0.4);
+  if (dir) pf.v.addScaledVector(dir, 1.5 + Math.random());
+  pf.sp.visible = true;
+}
+function puffStep(dt) {
+  for (const pf of puffs) {
+    if (pf.life <= 0) continue;
+    pf.life -= dt;
+    const a = 1 - pf.life / pf.max;
+    pf.sp.position.addScaledVector(pf.v, dt); pf.v.multiplyScalar(Math.exp(-dt * 1.6));
+    pf.sp.scale.setScalar(pf.size * (0.25 + 0.9 * Math.sqrt(a)));
+    // only as bright as the light that falls on it
+    const lit = 0.04 + 0.35 * lamp.level + muzzleLight.intensity * 0.004;
+    pf.sp.material.color.setRGB(pf.col[0] * lit, pf.col[1] * lit, pf.col[2] * lit);
+    pf.sp.material.opacity = 0.55 * (1 - a);
+    pf.sp.visible = pf.life > 0;
+  }
+}
+// a cow that is shot buckles at the knees, then goes over on its side
+function killCow(c, dir) {
+  c.dead = true; c.deadT = 0; c.staring = false; c.speed = 0;
+  const rx = Math.cos(c.heading), rz = -Math.sin(c.heading);
+  c.fallSide = dir.x * rx + dir.z * rz >= 0 ? 1 : -1;
+  c.mesh.rotation.order = 'YZX';
+  sound.thud(0.25);
+}
+function deadStep(c, dt) {
+  c.deadT += dt;
+  const t = c.deadT, buckle = smooth(clamp(t / 0.35, 0, 1)), roll = clamp((t - 0.3) / 0.75, 0, 1), r2 = roll * roll;
+  c.mesh.rotation.y = c.heading;
+  c.mesh.rotation.x = 0.1 * buckle * (1 - roll);
+  c.mesh.rotation.z = -c.fallSide * 1.45 * r2;
+  c.mesh.position.y = -0.12 * c.s * buckle * (1 - roll) + 0.2 * c.s * r2;
+  if (!c.thudded && roll >= 1) { c.thudded = true; sound.thud(0.6); puff(c.mesh.localToWorld(_rc.set(0, 1.0, 0)), 0.9, [0.2, 0.17, 0.13]); }
+  const own = c.mesh.material.userData.own;
+  own.uPose.value.set(0.2 * c.fallSide, -0.5 * buckle, 0.1, -0.4 * buckle);
+  own.uTail.value = 0; own.uGait.value.set(0, 0, 0, 0);
+  c.mesh.updateMatrixWorld();
+  // the body you bump into moves with it
+  const lat = 0.9 * c.s * r2, sx = Math.cos(c.heading) * c.fallSide * lat, sz = -Math.sin(c.heading) * c.fallSide * lat;
+  if (!c.blk0) c.blk0 = c.blockers.map((b) => [b.x, b.z]);
+  c.blockers.forEach((b, k) => { b.x = c.blk0[k][0] + sx; b.z = c.blk0[k][1] + sz; });
+  c.headWorld.set(0, 1.0, 1.3).applyMatrix4(c.mesh.matrixWorld);
+}
+
 // lights for the hand and lantern: the flame itself, the campfire (moved into camera space each frame), a faint sky
 const vmFlame = new THREE.PointLight(new THREE.Color(1.0, 0.7, 0.38), 1.0, 1.5, 2);
 const vmFire = new THREE.PointLight(new THREE.Color(1.0, 0.52, 0.2), 9, 0, 2);
-vmScene.add(vmFlame, vmFire, new THREE.HemisphereLight(0x1a2030, 0x080604, 0.12));
+const vmHemi = new THREE.HemisphereLight(0x1a2030, 0x080604, 0.12);
+vmScene.add(vmFlame, vmFire, vmHemi);
 
 // ---------------- scene assembly ----------------
 const sky = makeSky();
@@ -927,7 +1153,7 @@ addEventListener('resize', resize);
 resize();
 
 // ---------------- player ----------------
-const player = { pos: new THREE.Vector3(0.2, 0, 0.9), vel: new THREE.Vector3(), yaw: 0, pitch: -0.05, bob: 0, stepPhase: 0 };
+const player = { pos: GUN ? new THREE.Vector3(-0.35, 0, 0.75) : new THREE.Vector3(0.2, 0, 0.9), vel: new THREE.Vector3(), yaw: 0, pitch: -0.05, bob: 0, stepPhase: 0 };
 const keys = new Set();
 let started = false, locked = false, dragLook = TOUCH;
 const joy = { id: null, cx: 0, cy: 0, x: 0, y: 0 };
@@ -954,7 +1180,7 @@ document.addEventListener('mousemove', (e) => {
 canvas.addEventListener('pointerdown', (e) => {
   if (!started) return;
   if (!TOUCH && !locked && !dragLook) { tryLock(); return; }
-  if (TOUCH && e.clientX < innerWidth * 0.45 && joy.id === null) {
+  if (TOUCH && !GUN && e.clientX < innerWidth * 0.45 && joy.id === null) {
     joy.id = e.pointerId; joy.cx = e.clientX; joy.cy = e.clientY; joy.x = joy.y = 0;
     ui.joy.style.left = `${joy.cx}px`; ui.joy.style.top = `${joy.cy}px`; ui.joy.classList.add('show'); ui.knob.style.transform = 'translate(-50%,-50%)';
   } else if (look.id === null) { look.id = e.pointerId; look.x = e.clientX; look.y = e.clientY; }
@@ -982,6 +1208,7 @@ addEventListener('keydown', (e) => {
   if (!started) return;
   if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
   if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
+  if (GUN && e.code === 'KeyE' && !e.repeat) { cockGun(); return; }
   keys.add(e.code);
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
 });
@@ -1017,6 +1244,7 @@ function lookAngles(c, worldTarget) {
   return [clamp(Math.atan2(dx, dz), -1.35, 1.35), clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.6, 0.5)];
 }
 function cowStep(c, dt, time) {
+  if (c.dead) { deadStep(c, dt); return; }
   const ai = c.ai;
   if (c.staring) {
     const [y, p] = lookAngles(c, camera.position);
@@ -1133,11 +1361,16 @@ function updateLampUI() {
 if (ui.lampBtn) ui.lampBtn.addEventListener('click', (e) => { e.stopPropagation(); lampAction(); });
 const raiseDown = (e) => { e.preventDefault(); e.stopPropagation(); raiseTouch = true; };
 const raiseUp = (e) => { e.stopPropagation(); raiseTouch = false; };
+for (const [b, fn] of [[ui.cockBtn, cockGun], [ui.fireBtn, fireGun]]) if (b) b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
 if (ui.raiseBtn) {
   ui.raiseBtn.addEventListener('pointerdown', raiseDown);
   ui.raiseBtn.addEventListener('pointerup', raiseUp); ui.raiseBtn.addEventListener('pointercancel', raiseUp); ui.raiseBtn.addEventListener('pointerleave', raiseUp);
 }
-document.addEventListener('mousedown', (e) => { if (e.button === 2 && started) raiseMouse = true; });
+document.addEventListener('mousedown', (e) => {
+  if (!started) return;
+  if (GUN) { if (e.button === 2) cockGun(); else if (e.button === 0 && locked) fireGun(); return; }
+  if (e.button === 2) raiseMouse = true;
+});
 document.addEventListener('mouseup', (e) => { if (e.button === 2) raiseMouse = false; });
 document.addEventListener('contextmenu', (e) => e.preventDefault());
 
@@ -1206,9 +1439,9 @@ function revealStep() {
 }
 
 // ---------------- holding it: pose, sway, lag, tremor, pendulum ----------------
-const REST = { p: new THREE.Vector3(0.2, -0.07, -0.37), r: new THREE.Euler(0.1, 0.55, 0.0) };
-const RAISED = { p: new THREE.Vector3(0.19, 0.08, -0.43), r: new THREE.Euler(0.25, 0.4, 0.0) };
-const LEAN = { p: new THREE.Vector3(0.02, -0.2, -0.5), r: new THREE.Euler(-0.2, 0.5, 0.25) };
+const REST = { p: new THREE.Vector3(0.2 * MX, -0.07, -0.37), r: new THREE.Euler(0.1, 0.55 * MX, 0.0) };
+const RAISED = { p: new THREE.Vector3(0.19 * MX, 0.08, -0.43), r: new THREE.Euler(0.25, 0.4 * MX, 0.0) };
+const LEAN = { p: new THREE.Vector3(0.02 * MX, -0.2, -0.5), r: new THREE.Euler(-0.2, 0.5 * MX, 0.25 * MX) };
 const pend = { pivot: new THREE.Vector3(), bob: new THREE.Vector3(), prev: new THREE.Vector3(), init: false, lastRX: 0, lastRZ: 0, lastDVX: 0, lastDVZ: 0, peak: 0, lastCreak: 0 };
 const PEND_L = 0.17;
 // ---------------- the lantern never goes inside a cow ----------------
@@ -1252,13 +1485,13 @@ function holdStep(dt, time, speed, bobA) {
     p.lerp(LEAN.p, k); rx = lerp(rx, LEAN.r.x, k); ry = lerp(ry, LEAN.r.y, k); rz = lerp(rz, LEAN.r.z, k);
   }
   // turning the wick knob down
-  if (lamp.mode === 'turning') rz += Math.sin(Math.min(1, lamp.t / 0.6) * Math.PI) * 0.12;
+  if (lamp.mode === 'turning') rz += Math.sin(Math.min(1, lamp.t / 0.6) * Math.PI) * 0.12 * MX;
   // the hand lags a little behind where you look
   const yawVel = (player.yaw - prevYaw) / Math.max(dt, 1e-3), pitchVel = (player.pitch - prevPitch) / Math.max(dt, 1e-3);
   prevYaw = player.yaw; prevPitch = player.pitch;
   lagX = damp(lagX, clamp(-yawVel * 0.035, -0.09, 0.09), 9, dt);
   lagY = damp(lagY, clamp(-pitchVel * 0.03, -0.07, 0.07), 9, dt);
-  p.x -= lagX * 0.6; p.y += lagY * 0.6; rz -= lagX * 1.2; ry += lagX * 0.6;
+  p.x -= lagX * 0.6; p.y += lagY * 0.6; rz -= lagX * 1.2 * MX; ry += lagX * 0.6 * MX;
   // walking
   p.x += Math.cos(player.stepPhase) * 0.009 * bobA; p.y += Math.abs(Math.sin(player.stepPhase)) * 0.012 * bobA - 0.006 * bobA;
   // tremor: a fast physiological shake plus a slow drift, growing while the arm is held up
@@ -1271,7 +1504,7 @@ function holdStep(dt, time, speed, bobA) {
   handPivot.position.copy(p);
   handPivot.rotation.set(rx, ry, rz);
   handPivot.updateMatrixWorld(true);
-  if (arm.fore) { _up.set(0, 1, 0).applyQuaternion(tmpQ.copy(camera.quaternion).invert()); alignWrist(0.7, _up); placeArm(); }
+  if (arm && arm.fore) { _up.set(0, 1, 0).applyQuaternion(tmpQ.copy(camera.quaternion).invert()); alignWrist(arm, 0.7, _up); placeArm(arm); }
   // pendulum, simulated in the world so walking and turning swing it naturally
   qCam.copy(camera.quaternion);
   pend.pivot.copy(handPivot.position).applyQuaternion(qCam).add(camera.position);
@@ -1315,6 +1548,7 @@ function movePlayer(dt) {
   if (keys.has('KeyW') || keys.has('ArrowUp')) iz += 1;
   if (keys.has('KeyS') || keys.has('ArrowDown')) iz -= 1;
   ix += joy.x; iz -= joy.y;
+  if (GUN) { ix = 0; iz = 0; }
   const im = Math.hypot(ix, iz); if (im > 1) { ix /= im; iz /= im; }
   if (!WALK && lamp.mode === 'relight') { ix *= 0.2; iz *= 0.2; }
   if (ended) { ix = iz = 0; }
@@ -1360,6 +1594,12 @@ function frame(now) {
   lampStep(dt);
   tumbleStep(dt, lamp.gustT >= 0);
   holdStep(dt, time, speed, bobA);
+  if (GUN && rev) gunStep(dt, time);
+  if (dbgOrbit) { // debug: look at the gun hand from outside
+    const o = dbgOrbit, c = gunPivot.position;
+    vmCamera.position.set(c.x + Math.sin(o.yaw) * Math.cos(o.pitch) * o.dist, c.y + Math.sin(o.pitch) * o.dist, c.z + Math.cos(o.yaw) * Math.cos(o.pitch) * o.dist);
+    vmCamera.lookAt(c.x, c.y - 0.04, c.z); vmCamera.updateMatrixWorld(true);
+  }
   lanternSwing.updateMatrixWorld(true);
   flameCam.copy(FLAME_LOCAL); lanternSwing.localToWorld(flameCam); // camera space (vm scene root = camera)
   const lv = lamp.level * (1 + 0.04 * Math.sin(time * 11.0) * Math.sin(time * 17.3 + 1.1) + 0.02 * Math.sin(time * 31.0));
@@ -1405,6 +1645,7 @@ function frame(now) {
   U.uEyeSelf.value = 5.0 * Math.min(1, n * 2.2);
   finalPass.uniforms.uSeed.value = (now * 0.061) % 997;
 
+  if (GUN) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
   sound.update(camera.position, fwd, cows, time);
@@ -1503,7 +1744,9 @@ function shiftCow(c, dx, dz) {
   c.shoveX += dx; c.shoveZ += dz;
 }
 // bodies can't pass through each other or through a saguaro: whatever overlaps is pushed apart
+const herdAlive = () => cows.filter((c) => !c.dead);
 function separateCows() {
+  const cows = herdAlive();
   const pc = PLANT_U.uPC.value;
   for (const c of cows) cowCaps(c);
   for (let it = 0; it < 4; it++) {
@@ -1549,6 +1792,8 @@ function separateCows() {
   }
 }
 function herdStep(dt) {
+  const cows = herdAlive();
+  if (!cows.length) return;
   let cx = 0, cz = 0;
   for (const c of cows) { cx += c.mesh.position.x; cz += c.mesh.position.z; cowCaps(c); }
   cx /= cows.length; cz /= cows.length;
@@ -1556,13 +1801,13 @@ function herdStep(dt) {
   // you: inside its flight zone, a cow wants to walk away from you, faster the closer you are
   for (const c of cows) {
     const p = c.mesh.position, dx = p.x - player.pos.x, dz = p.z - player.pos.z, d = Math.hypot(dx, dz);
-    c.press = d < FLIGHT_R && d > 1e-3 ? (FLIGHT_R - d) / FLIGHT_R : 0;
+    c.press = WALK && d < FLIGHT_R && d > 1e-3 ? (FLIGHT_R - d) / FLIGHT_R : 0;
     c.pdx = d > 1e-3 ? dx / d : 0; c.pdz = d > 1e-3 ? dz / d : 0;
   }
   // the herd moves as one: a cow near one that's on the move is stirred too, a little less, so it
   // goes along with the others; once you leave them be it fades over a few seconds
   for (const c of cows) {
-    let t = clamp(c.press * 4, 0, 1);
+    let t = Math.max(clamp(c.press * 4, 0, 1), c.startle || 0);
     for (const o of cows) {
       if (o === c) continue;
       const e = Math.hypot(c.mesh.position.x - o.mesh.position.x, c.mesh.position.z - o.mesh.position.z);
@@ -1575,7 +1820,8 @@ function herdStep(dt) {
     const p = c.mesh.position, k = c.caps;
     let vx = 0, vz = 0;
     if (c.press > 0) { vx += c.pdx * c.press * 2.2; vz += c.pdz * c.press * 2.2; }
-    c.alarm = Math.max(c.alarm - dt * 0.25, c.press); // stays uneasy for a few seconds
+    if (c.startle > 0) { vx += c.pdx * c.startle * 1.9; vz += c.pdz * c.startle * 1.9; c.startle = Math.max(0, c.startle - dt * 0.3); } // away from the shot
+    c.alarm = Math.max(c.alarm - dt * 0.25, c.press, (c.startle || 0) * 0.9); // stays uneasy for a few seconds
     // don't get left behind: the further out from the others, the more it hurries back
     const hx = cx - p.x, hz = cz - p.z, hd = Math.hypot(hx, hz);
     if (hd > 6) { const g = 0.9 * Math.min(1, (hd - 6) / 8); vx += (hx / hd) * g; vz += (hz / hd) * g; }
@@ -1679,12 +1925,14 @@ function frameWalk(now) {
 (async () => {
   try {
     if (!WALK) { makeLantern(); makeArm(); }
+    if (GUN) makeGun();
     let parts = 0;
-    const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1;
+    const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1 + (GUN ? 1 : 0);
     const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
     const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
       Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
-      Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; })]);
+      Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
+      GUN ? loadGunHand().then(bump) : Promise.resolve()]);
     saguaroField = new SaguaroField(sculpts, plantClear);
     scene.add(saguaroField.group);
     brushFields = makeBrush(plantClear); // after the saguaros, so no bush grows through a trunk
@@ -1706,7 +1954,7 @@ function frameWalk(now) {
         mesh, s: h.s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(),
         aimPoints: [new THREE.Vector3(0, 1.0, 0.0), new THREE.Vector3(0, 1.0, 0.6), new THREE.Vector3(0, 1.0, -0.6), new THREE.Vector3(0, 1.15, 1.1)],
         heading: mesh.rotation.y, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
-        stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null,
+        stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null, startle: 0, dead: false,
         ai: { t: rand(0, 3), yaw: rand(-0.4, 0.4), pitch: rand(-0.9, 0.0), tYaw: 0, tPitch: -0.5, flick: 0 },
       });
     });
@@ -1719,7 +1967,8 @@ function frameWalk(now) {
     for (const t of tumbles) spawnTumble(t, true);
     renderer.compile(scene, camera);
     if (!WALK) renderer.compile(vmScene, vmCamera);
-    ui.loadTxt.textContent = TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
+    ui.loadTxt.textContent = GUN ? (TOUCH ? '화면을 끌어 둘러봐요. 오른쪽 버튼으로 공이치기를 젖히고 쏴요' : '마우스 둘러보기 · 오른쪽 클릭(E) 공이치기 · 왼쪽 클릭 쏘기 · 스페이스 랜턴 들기 · F 끄기와 불 붙이기')
+      : TOUCH ? '왼쪽을 밀어 걷고, 오른쪽을 끌어 둘러봐요'
       : WALK ? 'WASD 걷기 · 마우스 둘러보기'
       : WITH_COUNTING ? 'WASD 걷기 · 마우스 둘러보기 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
       : 'WASD 걷기 · 마우스 둘러보기 · 스페이스/오른쪽 클릭 랜턴 들기 · F 끄기와 불 붙이기';
@@ -1777,6 +2026,12 @@ if (DEBUG) {
     herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2), +c.heading.toFixed(2)]),
     gap: () => herdGap(),
     raw: (on) => { kuwaPass.enabled = !on; },
+    cock: () => cockGun(), fire: () => fireGun(), vmLight: (k) => { vmHemi.intensity = k; vmHemi.color.setRGB(1, 1, 1); vmHemi.groundColor.setRGB(0.4, 0.4, 0.4); },
+    gunHold: (x, y, z, yaw, roll) => { GUN_HOLD.set(x, y, z); if (yaw !== undefined) { GUN_TURN.yaw = yaw; GUN_TURN.roll = roll; } },
+    hideWorld: (on) => { scene.visible = !on; },
+    vmOrbit: (yaw, pitch, dist) => { dbgOrbit = yaw === undefined ? null : { yaw, pitch, dist }; if (!dbgOrbit) { vmCamera.position.set(0, 0, 0); vmCamera.quaternion.identity(); } },
+    gun: () => ({ mode: gun.mode, top: gun.top, chambers: gun.chambers.slice(), dead: cows.filter((c) => c.dead).length, startled: cows.filter((c) => c.startle > 0.05).length }),
+    aimAt: (i) => { const c = cows[i]; const dx = c.blockers[1].x - player.pos.x, dz = c.blockers[1].z - player.pos.z; player.yaw = Math.atan2(-dx, -dz); player.pitch = Math.atan2(0.95 * c.s - EYE_H, Math.hypot(dx, dz)); },
     plantsNear: (f) => { const F = [saguaroField, ...brushFields][f]; return F ? F.items.map((it) => { const x = it.x + Math.round((player.pos.x - it.x) / PLANT_PER) * PLANT_PER, z = it.z + Math.round((player.pos.z - it.z) / PLANT_PER) * PLANT_PER;
       return { v: it.v, x: +x.toFixed(2), z: +z.toFixed(2), d: +Math.hypot(x - player.pos.x, z - player.pos.z).toFixed(1), H: +it.H.toFixed(2) }; }).sort((a, b) => a.d - b.d) : []; },
     trisBy: () => { const c = (root) => { let t = 0; root.traverse((o) => { if (o.visible && o.geometry && o.geometry.index) { const n = o.isInstancedMesh ? o.count : o.geometry.isInstancedBufferGeometry ? o.geometry.instanceCount : 1; t += (o.geometry.index.count / 3) * n; } }); return Math.round(t); };
