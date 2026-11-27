@@ -93,7 +93,7 @@ function step(g, dt) {
 
 // ---------------- sound ----------------
 // gunshot candidates, to be judged by ear; and the small sounds of cocking and reloading
-let shotKind = 'powderCrack', dropKind = 'rock';
+let shotKind = 'powderRef', dropKind = 'rock';
 const snd = (() => {
   let ac = null, nb = null, out = null;
   let irs = {};
@@ -108,19 +108,22 @@ const snd = (() => {
   };
   const noise = (a) => { const b = a.createBuffer(1, a.sampleRate * 3, a.sampleRate), d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; return b; };
   // the reference's shape: a bright crack, then a dense roar that holds about half a second, shimmering, and rolls away
-  const roar = (a, t, level, hold, bright) => {
+  // fade: when given, the roar dies away in one smooth fall over that many seconds, its shimmer and hiss settling with it
+  const roar = (a, t, level, hold, bright, fade) => {
     const src = a.createBufferSource(); src.buffer = nb;
     const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 90;
     const lp = a.createBiquadFilter(); lp.type = 'lowpass';
-    lp.frequency.setValueAtTime(bright, t); lp.frequency.exponentialRampToValueAtTime(1800, t + hold * 0.6); lp.frequency.exponentialRampToValueAtTime(1000, t + hold + 0.9);
+    lp.frequency.setValueAtTime(bright, t); lp.frequency.exponentialRampToValueAtTime(1800, t + hold * 0.6); lp.frequency.exponentialRampToValueAtTime(fade ? 650 : 1000, t + hold + (fade || 0.9));
     const bp = a.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 850; bp.Q.value = 0.6; // the weight of it sits in the middle
     const bg = a.createGain(); bg.gain.value = 1.7;
     const g = a.createGain();
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(level, t + 0.006); g.gain.linearRampToValueAtTime(level * 0.85, t + hold);
-    g.gain.exponentialRampToValueAtTime(level * 0.3, t + hold + 0.08); g.gain.exponentialRampToValueAtTime(level * 0.12, t + hold + 0.45); g.gain.exponentialRampToValueAtTime(level * 0.01, t + hold + 0.9);
+    g.gain.exponentialRampToValueAtTime(level * 0.3, t + hold + 0.08);
+    if (fade) g.gain.exponentialRampToValueAtTime(level * 0.003, t + hold + fade);
+    else { g.gain.exponentialRampToValueAtTime(level * 0.12, t + hold + 0.45); g.gain.exponentialRampToValueAtTime(level * 0.01, t + hold + 0.9); }
     hp.connect(bp).connect(bg).connect(g);
     const wob = a.createGain(); wob.gain.value = 1; // the shimmer: the roar's loudness wanders a few dB
-    const mod = a.createBufferSource(); mod.buffer = nb; const ml = a.createBiquadFilter(); ml.type = 'lowpass'; ml.frequency.value = 30; const md = a.createGain(); md.gain.value = 2.2;
+    const mod = a.createBufferSource(); mod.buffer = nb; const ml = a.createBiquadFilter(); ml.type = 'lowpass'; ml.frequency.value = 30; const md = a.createGain(); md.gain.setValueAtTime(2.2, t); if (fade) md.gain.linearRampToValueAtTime(0.3, t + hold + fade * 0.6);
     mod.connect(ml).connect(md).connect(wob.gain);
     src.connect(hp).connect(lp).connect(g).connect(wob).connect(out);
     src.start(t, Math.random() * 0.5); src.stop(t + hold + 1); mod.start(t, Math.random()); mod.stop(t + hold + 1);
@@ -209,7 +212,7 @@ const snd = (() => {
     powderRef(a, t) { // ⑨ ⑤ moved toward the reference: less boom, a shorter held roar under the crack and the tang
       const bus = a.createGain(), sh = shaper(a, 2.5); bus.connect(sh).connect(out); sh.connect(tail(a, 'dry', 900, 0.7));
       burst(a, t, 1800, 'lowpass', 0.7, 0.8, 0.25, bus); burst(a, t, 350, 'lowpass', 0.8, 0.4, 0.45, bus); thump(a, t, 80, 32, 0.35, 0.4, bus);
-      crack(a, t, 1.2, 'dry'); tang(a, t, 1); roar(a, t, 0.45, 0.45, 5000);
+      crack(a, t, 1.2, 'dry'); tang(a, t, 1); roar(a, t, 0.45, 0.45, 5000, 0.8);
     },
     ring(a, t) { // ④ the shot, then the ears ring and everything goes muffled
       const bus = a.createGain(), lp = a.createBiquadFilter(); lp.type = 'lowpass';
