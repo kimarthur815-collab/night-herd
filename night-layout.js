@@ -32,7 +32,6 @@ export const NL = {
   scale: [0.95, 1.05],
   look: { pitch: -0.03 }, // 임시: on a phone the view at each place looks straight at the herd (no looking around); PC looks with the mouse
   walk: { speed: 1.4, turn: 0.6 }, // 임시: walking to the next place: m/s, and how far you turn toward where you walk (radians)
-  countLight: 0.3, // a cow is counted only if the lantern's light reaches it (첫 슬라이스와 같은 값); never while the lantern is out
   hint: { idle: 12, misses: 3 }, // 임시: say the how-to line again after this many seconds doing nothing, or this many taps on nothing
   matches: 1, // 성냥: 랜턴이 꺼지면 한 번 다시 켤 수 있다 (사용자). 채우는 곳은 마을 상점 (아직 없음)
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")

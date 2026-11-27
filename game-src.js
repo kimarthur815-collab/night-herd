@@ -1549,7 +1549,7 @@ function makeNightHerd(geos) {
     });
   });
 }
-// a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, if the lantern's light reaches it
+// a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, lantern lit or not
 function nightTap(nx, ny) {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
@@ -1563,9 +1563,7 @@ function nightTap(nx, ny) {
   }
   if (!hit || best > 30) { if (++night.misses >= NL.hint.misses) { night.misses = 0; hintCount(); } return; } // tapping at nothing: say how again
   night.misses = 0; night.lastAct = performance.now();
-  if (hit.counted) return; // 임시: one already counted is not counted again
-  tapC.copy(tapO).addScaledVector(tapD, best);
-  if (lamp.level < 0.05 || lanternLightAt(tapC) < NL.countLight) return; // too dark to tell what it is (기획서: 랜턴이 꺼진 동안 셀 수 없음)
+  if (hit.counted) return; // 임시: one already counted is not counted again (counting works with the lantern out too, 사용자 2026-11-28)
   hit.counted = true; count++;
   if (count <= NL.told) say(`${NUM[count - 1]}…`, NL.saySecs); else say(`…${NUM[count - 1]}.`, 3.0);
 }
