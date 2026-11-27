@@ -982,7 +982,7 @@ const gun = { t: 0, kick: 9, thumb: 0, aim: 0, shots: 0, reload: 0 };
 let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null, gunEnvMats = [];
 let MUZZLE_Z = -0.2311;
 const gunSnd = makeRevolverSound(() => sound.ctx || null, () => sound.master);
-const gunOn = { click: (g, f) => gunSnd.click(g, f), shot: () => shoot(), dry: () => sound.dry(), slide: () => gunSnd.slide(), drop: () => gunSnd.drop(GAME_DROP), insert: () => gunSnd.insert() };
+const gunOn = { click: (g, f) => gunSnd.click(g, f), shot: () => shoot(), dry: () => { sound.dry(); nightDry(); }, slide: () => gunSnd.slide(), drop: () => gunSnd.drop(GAME_DROP), insert: () => gunSnd.insert() };
 // held for reloading (temporary): brought in low and rolled left in the hand, so the loading gate faces up at you
 const RELOAD_HOLD = new THREE.Vector3(0.02, -0.12, -0.28), RELOAD_Q = new THREE.Quaternion().setFromRotationMatrix((() => {
   // the right side (and the gate) up and a little toward you, the muzzle across to the left, the grip to the right in the hand
@@ -1047,6 +1047,7 @@ function gunStep(dt, time) {
   p.y += Math.sin(time * 11.3 + 0.7) * Math.sin(time * 6.1) * 0.0005 * (gs - 1);
   p.y += Math.sin(time * 0.27 + 2.0) * 0.0012 + Math.sin(time * 1.3) * 0.0008; // breathing
   _ga.set(0, -0.7 * (1 - gun.aim), -GUN_TURN.aimD);
+  if (NIGHT_SCENE) { gun.pointT = (gun.pointT ?? 9) + dt; gun.pointK = gun.pointT < NL.gun.point ? (gun.pointK ?? 0) : damp(gun.pointK ?? 0, 0, 4, dt); if (gun.pointK > 0.001) _ga.lerp(gunPoint, gun.pointK); }
   _gm.lookAt(p, _ga, _gup); gunPivot.quaternion.setFromRotationMatrix(_gm);
   // canted a little, so you see some of its side: the cylinder and the hammer
   gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(0.42 * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
@@ -1069,20 +1070,22 @@ function shoot() {
   gun.kick = 0; gun.shots++;
   gunSnd.bang(GAME_SHOT);
   _ro.copy(camera.position);
-  _rd.copy(fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
+  _rd.copy(NIGHT_SCENE && shotAimed ? shotDir : fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
+  shotAimed = false;
   let best = Infinity, hit = null;
-  for (const c of cows) {
+  if (NIGHT_SCENE) [hit, best] = rayCow(_ro, _rd);
+  else for (const c of cows) {
     if (c.dead) continue;
     for (const b of c.blockers) { const t = raySphere(_ro, _rd, _rc.set(b.x, 0.95 * c.s, b.z), 0.43 * c.s); if (t < best) { best = t; hit = c; } }
     const t = raySphere(_ro, _rd, _rc.set(c.headWorld.x, c.headWorld.y, c.headWorld.z), 0.24 * c.s); if (t < best) { best = t; hit = c; }
   }
   const tg = _rd.y < -1e-3 ? -_ro.y / _rd.y : Infinity;
-  if (hit && best < tg && best < 80) killCow(hit, _rd);
+  if (hit && best < tg && best < 80) { if (NIGHT_SCENE) nightHit(hit); else killCow(hit, _rd); }
   else if (tg < 70) puff(_rc.copy(_ro).addScaledVector(_rd, tg), 0.6, [0.16, 0.13, 0.1]);
   _ga.set(0, 0, MUZZLE_Z - 0.06); gunPivot.localToWorld(_ga); _ga.applyQuaternion(camera.quaternion).add(camera.position);
   for (let i = 0; i < 4; i++) puff(_ga, 1.3, [0.55, 0.54, 0.52], _rd);
   // every cow hears it
-  for (const c of cows) if (!c.dead) { const d = Math.hypot(c.mesh.position.x - player.pos.x, c.mesh.position.z - player.pos.z); c.startle = Math.max(c.startle || 0, clamp(1.3 - d / 30, 0.3, 1)); }
+  for (const c of cows) if (!c.dead) { const d = Math.hypot(c.mesh.position.x - player.pos.x, c.mesh.position.z - player.pos.z); c.startle = Math.max(c.startle || 0, clamp(1.3 - d / 30, 0.3, 1)); if (NIGHT_SCENE) { c.ai.graze = false; c.ai.t = rand(0.05, 0.3); c.ai.flick = 1; } } // every cow's head comes up
 }
 // black-powder smoke and dust: soft sprites that grow, drift and fade
 const puffs = [];
@@ -1124,7 +1127,7 @@ function deadStep(c, dt) {
   c.mesh.rotation.y = c.heading;
   c.mesh.rotation.x = 0.1 * buckle * (1 - roll);
   c.mesh.rotation.z = -c.fallSide * 1.45 * r2;
-  c.mesh.position.y = -0.12 * c.s * buckle * (1 - roll) + 0.2 * c.s * r2;
+  c.mesh.position.y = (c.y0 || 0) - 0.12 * c.s * buckle * (1 - roll) + 0.2 * c.s * r2;
   if (!c.thudded && roll >= 1) { c.thudded = true; sound.thud(0.6); puff(c.mesh.localToWorld(_rc.set(0, 1.0, 0)), 0.9, [0.2, 0.17, 0.13]); }
   const own = c.mesh.material.userData.own;
   own.uPose.value.set(0.2 * c.fallSide, -0.5 * buckle, 0.1, -0.4 * buckle);
@@ -1252,7 +1255,9 @@ addEventListener('keydown', (e) => {
   if (NIGHT_SCENE) {
     if (e.code === 'Escape') { pauseNight(); return; }
     if ((e.code === 'KeyD' || e.code === 'ArrowRight') && !e.repeat) { nextStation(); e.preventDefault(); return; }
-    if (['KeyE', 'KeyR', 'KeyW', 'KeyA', 'KeyS', 'ArrowUp', 'ArrowDown', 'ArrowLeft'].includes(e.code)) return; // stage 1: no shooting, no walking about
+    if (e.code === 'KeyR' && !e.repeat) { reloadGun(); return; }
+    if (e.code === 'KeyE' && !e.repeat) { if (rev && rev.state.cocked) decockGun(); else nightCock(); return; }
+    if (['KeyW', 'KeyA', 'KeyS', 'ArrowUp', 'ArrowDown', 'ArrowLeft'].includes(e.code)) return; // no walking about
   }
   if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
   if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
@@ -1443,7 +1448,12 @@ if (ui.raiseBtn) {
 }
 document.addEventListener('mousedown', (e) => {
   if (!started) return;
-  if (NIGHT_SCENE) { if (e.button === 0 && (locked || dragLook) && !TOUCH) nightTap(0, 0); return; }
+  if (NIGHT_SCENE) {
+    if (TOUCH || !(locked || dragLook)) return;
+    if (e.button === 0) { if (rev && rev.state.cocked) nightShoot(0, 0); else nightTap(0, 0); }
+    else if (e.button === 2) { if (rev && rev.state.cocked) decockGun(); else nightCock(); }
+    return;
+  }
   if (GUN) { if (e.button === 2) cockGun(); else if (e.button === 0 && locked) fireGun(); return; }
   if (e.button === 2) raiseMouse = true;
 });
@@ -1571,27 +1581,33 @@ function nightTap(nx, ny, finger) {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
   tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
-  let best = Infinity, hit = null;
-  for (const c of cows) {
-    if (c.mon) for (const p of c.mon.eyes) if (p.visible) { const t = raySphere(tapO, tapD, p.position, 0.12); if (t < best) { best = t; hit = c; } }
-    if (c.mon && c.mon.clue === 4) continue; // only eyes: nothing else to tap
-    // the barrel (belly to back, about 0.6 to 1.35 m) and the head (muzzle up to the poll); close to the real outline, so a head
-    // showing over the back of a cow in front can be tapped
-    for (const b of c.blockers) { const t = raySphere(tapO, tapD, tapC.set(b.x, c.y0 + 0.95 * c.s, b.z), 0.38 * c.s); if (t < best) { best = t; hit = c; } }
-    for (const [k, rr] of [[0, 0.15], [0.5, 0.15], [1, 0.14]]) { const t = raySphere(tapO, tapD, tapC.copy(c.eyeWorld).lerp(c.noseWorld, k), rr * c.s); if (t < best) { best = t; hit = c; } } // between the eyes, mid-face, nose
-  }
+  let [hit, best] = rayCow(tapO, tapD);
   if ((!hit || best > 30) && finger) hit = nearOnScreen(nx, ny); // a finger is wide: the cow nearest the tap, if it is close
   if (!hit || best > 30 && !finger) { if (++night.misses >= NL.hint.misses) { night.misses = 0; hintCount(); } return; } // tapping at nothing: say how again
   night.misses = 0; night.lastAct = performance.now();
   if (hit.counted) return; // 임시: one already counted is not counted again (counting works with the lantern out too, 사용자 2026-11-28)
   hit.counted = true; count++;
   if (count <= NL.told) say(`${NUM[count - 1]}…`, NL.saySecs); else say(`…${NUM[count - 1]}.`, 3.0);
+  if (count === NL.told + 1 && !night.toldCock) { night.toldCock = true; setTimeout(() => say(TOUCH ? NL.lines.cock : NL.lines.cockPC, 3.4), 3200); }
+}
+function rayCow(o, d) {
+  let best = Infinity, hit = null;
+  for (const c of cows) {
+    if (c.dead || c.gone) continue;
+    if (c.mon) for (const p of c.mon.eyes) if (p.visible) { const t = raySphere(o, d, p.position, 0.12); if (t < best) { best = t; hit = c; } }
+    if (c.mon && c.mon.clue === 4) continue; // only eyes: nothing else to tap
+    // the barrel (belly to back, about 0.6 to 1.35 m) and the head (muzzle up to the poll); close to the real outline, so a head
+    // showing over the back of a cow in front can be tapped
+    for (const b of c.blockers) { const t = raySphere(o, d, tapC.set(b.x, c.y0 + 0.95 * c.s, b.z), 0.38 * c.s); if (t < best) { best = t; hit = c; } }
+    for (const [k, rr] of [[0, 0.15], [0.5, 0.15], [1, 0.14]]) { const t = raySphere(o, d, tapC.copy(c.eyeWorld).lerp(c.noseWorld, k), rr * c.s); if (t < best) { best = t; hit = c; } } // between the eyes, mid-face, nose
+  }
+  return [hit, best];
 }
 const _np = new THREE.Vector3();
 function nearOnScreen(nx, ny) {
   const W = innerWidth, H = innerHeight, reach = Math.min(W, H) * NL.swipe.reach;
   let best = reach, hit = null;
-  for (const c of cows) for (const p of c.mon ? (c.mon.clue === 4 ? c.mon.eyes.map((e) => e.position) : [...c.mon.eyes.filter((e) => e.visible).map((e) => e.position), _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) : [c.eyeWorld, c.noseWorld, _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) {
+  for (const c of cows) if (!c.dead && !c.gone) for (const p of c.mon ? (c.mon.clue === 4 ? c.mon.eyes.map((e) => e.position) : [...c.mon.eyes.filter((e) => e.visible).map((e) => e.position), _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) : [c.eyeWorld, c.noseWorld, _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) {
     const v = tapC.copy(p).project(camera); if (v.z > 1) continue;
     const d = Math.hypot((v.x - nx) * W / 2, (v.y - ny) * H / 2); if (d < best) { best = d; hit = c; }
   }
@@ -1664,6 +1680,30 @@ function hurtFrame(dt) {
   if (!on || !sound.ctx || paused) return;
   const now = sound.ctx.currentTime;
   if (now >= heartNext) { heartNext = now + 60 / H.bpm[i]; sound.heart(H.heart[i] * hurtK); }
+}
+// ---------------- the gun in the night (2단계-3): cock, then tap where to shoot; the muzzle turns there ----------------
+const shotDir = new THREE.Vector3(), gunPoint = new THREE.Vector3(), _qinv = new THREE.Quaternion();
+let shotAimed = false;
+function nightShoot(nx, ny) {
+  if (!rev || !rev.state.cocked || rev.state.anim || night.scaring || night.walking || paused || ended) return false;
+  tapO.copy(camera.position); shotDir.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize(); shotAimed = true;
+  gunPoint.copy(shotDir).applyQuaternion(_qinv.copy(camera.quaternion).invert()).multiplyScalar(GUN_TURN.aimD);
+  gun.pointK = 1; gun.pointT = 0; night.lastAct = performance.now();
+  fireGun();
+  return true;
+}
+function nightCock() {
+  if (!rev || night.scaring || paused || ended) return;
+  cockGun(); night.lastAct = performance.now();
+  if (!night.toldFire) { night.toldFire = true; setTimeout(() => say(TOUCH ? NL.lines.fire : NL.lines.firePC, 3.4), 500); }
+}
+// 임시: the hammer let down again by hand (a tap counts again instead of shooting)
+function decockGun() { if (rev && rev.state.cocked && !rev.state.anim) { rev.state.cocked = false; gunSnd.click(0.3, 2600); gun.t = 0; } }
+function nightDry() { if (NIGHT_SCENE && !night.toldReload) { night.toldReload = true; setTimeout(() => say(TOUCH ? NL.lines.reload : NL.lines.reloadPC, 3.4), 400); } }
+// what the bullet found in the night: a cow is lost (it falls), the thing is hit (2단계-4)
+function nightHit(c) {
+  if (c.mon) { c.shot = true; return; }
+  killCow(c, _rd);
 }
 function nextStation() {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
@@ -1742,18 +1782,29 @@ if (NIGHT_SCENE) {
 }
 // phone gestures (debug pages take any length of touch as a tap: the test browser draws slowly): a short touch is a tap; a long sideways swipe goes on; up or down on the left is the lantern
 const gest = new Map();
-function gestureDown(e) { gest.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() }); try { canvas.setPointerCapture(e.pointerId); } catch {} }
+function gestureDown(e) {
+  const g = { x: e.clientX, y: e.clientY, t: performance.now() }; gest.set(e.pointerId, g);
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  // a long press on the gun (lower right) reloads
+  if (g.x > innerWidth * NL.gun.area[0] && g.y > innerHeight * NL.gun.area[1]) g.timer = setTimeout(() => { if (!g.done && !g.moved && started && !paused && !ended) { g.done = true; reloadGun(); night.lastAct = performance.now(); } }, NL.gun.hold * 1000);
+}
 function gestureUp(e) {
   const g = gest.get(e.pointerId); gest.delete(e.pointerId);
   if (!g || g.done || !started || paused || ended) return;
   const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y;
-  if (e.type !== 'pointercancel' && Math.hypot(dx, dy) < 18 && (DEBUG || performance.now() - g.t < 700)) { nightTap((e.clientX / W) * 2 - 1, 1 - (e.clientY / H) * 2, true); return; }
+  clearTimeout(g.timer);
+  if (e.type !== 'pointercancel' && Math.hypot(dx, dy) < 18 && (DEBUG || performance.now() - g.t < 700)) {
+    const nx = (e.clientX / W) * 2 - 1, ny = 1 - (e.clientY / H) * 2;
+    if (rev && rev.state.cocked) nightShoot(nx, ny); else nightTap(nx, ny, true);
+    return;
+  }
   gestureSwipe(g, dx, dy); // a swipe the browser cut short still counts if it went far enough
 }
 // a swipe acts as soon as the finger has gone far enough, without waiting for it to lift
 function gestureMove(e) {
   const g = gest.get(e.pointerId);
   if (!g || g.done || !started || paused || ended) return;
+  if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > 18) { g.moved = true; clearTimeout(g.timer); }
   gestureSwipe(g, e.clientX - g.x, e.clientY - g.y);
 }
 function gestureSwipe(g, dx, dy) {
@@ -1763,6 +1814,9 @@ function gestureSwipe(g, dx, dy) {
     g.done = true; night.lastAct = performance.now();
     if (dy < 0) { if (lamp.mode === 'off') lampAction(); else if (lamp.mode === 'on') raiseTouch = true; } // up: light it, or hold it up
     else if (raiseTouch) raiseTouch = false; else if (lamp.mode === 'on') lampAction(); // down: lower it, or put it out
+  } else if (Math.abs(dy) > far && Math.abs(dy) > NL.swipe.ratio * Math.abs(dx)) { // the right side: the hammer
+    g.done = true; night.lastAct = performance.now();
+    if (dy > 0) nightCock(); else decockGun();
   }
 }
 
@@ -1978,7 +2032,7 @@ function frame(now) {
   if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
-  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); }
+  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); puffStep(dt); }
   sound.update(camera.position, fwd, cows, time);
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -2415,6 +2469,8 @@ if (DEBUG) {
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
+    gunState: () => rev && { cocked: rev.state.cocked, anim: rev.state.anim?.type || null, chambers: rev.state.chambers.slice(), top: rev.state.top },
+    shootAt: (x, y) => nightShoot(x, y), cock: () => nightCock(), dead: () => cows.filter((c) => c.dead).length,
     nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
       cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), counted: c.counted })) }),
     tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },
