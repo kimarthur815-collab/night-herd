@@ -77,8 +77,8 @@ ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground)
 
 // a gentle rise starting just behind the front row: the rows behind stand a little higher each
 function hillH(x, z) {
-  const u = Math.min(1, Math.max(0, (-z - 1.3) / 7)), s = u * u * (3 - 2 * u);
-  return s * (1.05 + 0.25 * Math.sin(x * 0.23 + 1.0) + 0.15 * Math.sin(x * 0.61 + 2.0)) - 0.03;
+  const d = Math.max(0, -z - 1.5), r = d < 1 ? 0.2 * d * d : 0.2 + 0.4 * (d - 1); // starts gently, steeper from the second row
+  return 2.4 * Math.tanh((r * (1 + 0.15 * Math.sin(x * 0.23 + 1.0) + 0.1 * Math.sin(x * 0.61 + 2.0))) / 2.4) - 0.03;
 }
 {
   const g = new THREE.PlaneGeometry(60, 24, 120, 48); g.rotateX(-Math.PI / 2); g.translate(0, 0, -13.3);
@@ -301,7 +301,9 @@ function layoutRow(M) {
   let seed = 23; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const add = (geos, x, z, yaw, near, coat) => {
     const mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], cowMaterial(coat, Math.min(1, coat + 0.06 + r() * 0.1), r() * 6));
-    mesh.position.set(x, z < -1.3 ? hillH(x, z) : 0, z); mesh.rotation.y = yaw; mesh.scale.setScalar(0.92 + r() * 0.14);
+    // on the slope a cow leans with the ground: front and back hooves on it
+    const fx = Math.sin(yaw) * 0.9, fz = Math.cos(yaw) * 0.9, hb = Math.max(0, hillH(x - fx, z - fz)), hf = Math.max(0, hillH(x + fx, z + fz));
+    mesh.position.set(x, Math.max(0, hillH(x, z)), z); mesh.rotation.order = 'YXZ'; mesh.rotation.y = yaw; mesh.rotation.x = Math.atan2(hb - hf, 1.8); mesh.scale.setScalar(0.92 + r() * 0.14);
     mesh.castShadow = near; mesh.receiveShadow = true;
     mesh.userData.nod = { t: r() * 5, goal: 0, v: 0, turn: (r() - 0.5) * 0.3 };
     row.add(mesh);
@@ -599,7 +601,7 @@ async function setMonster(id) {
   const info = INFO[id];
   $('tag').textContent = info.tag; $('title').textContent = info.title;
   $('pts').innerHTML = [...info.pts, `포효: ${POUNCE_KINDS[info.roar]}`].map((p) => `<li>${p}</li>`).join('');
-  pounceKind = info.roar;
+  pounceKind = info.roar; snd.prepare(info.roar); // the stuttered roar is cut from one rendered ahead
   const M = await loadMonster(id);
   if (cur) { scene.remove(cur.root); cur.root.position.set(0, 0, 0); cur.root.quaternion.identity(); }
   $('fade').style.opacity = 0; snd.restore();
