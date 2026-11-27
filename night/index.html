@@ -33,6 +33,7 @@ body.debug #fps{display:block}
 .btn:disabled{opacity:.5;cursor:default}
 #sub{position:fixed;left:50%;bottom:max(92px,14vh);transform:translateX(-50%);margin:0;font-size:clamp(17px,2.4vw,22px);color:var(--ink);opacity:0;transition:opacity .5s;pointer-events:none;text-shadow:0 2px 10px #000;white-space:nowrap}
 #sub.show{opacity:1}
+#ver{margin:18px 0 0;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
 #turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
 body.portrait #turn{display:block}
 @media (prefers-reduced-motion: reduce){#start,#sub,#end{transition:none}}
@@ -43,10 +44,10 @@ body.portrait #turn{display:block}
 <div id="fps">fps –</div>
 <p id="turn">가로로 돌리면 더 넓게 보여요</p>
 <p id="sub" aria-live="polite"></p>
-<div id="pause"><div class="card"><h1>멈춤</h1><p class="sub">밤 장면 · 1단계</p><button id="resume" class="btn" type="button">계속</button></div></div>
-<div id="end"><div class="card"><h1>여기까지</h1><p class="sub">밤 장면 1단계는 여기서 끝나요</p><button id="again" class="btn" type="button">다시 하기</button></div></div>
-<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">밤 장면 · 1단계</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button></div></div>
+<div id="pause"><div class="card"><h1>멈춤</h1><p class="sub">밤 장면</p><button id="resume" class="btn" type="button">계속</button></div></div>
+<div id="end"><div class="card"><h1>여기까지</h1><p class="sub">밤 장면은 여기서 끝나요</p><button id="again" class="btn" type="button">다시 하기</button></div></div>
+<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">밤 장면</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button><p id="ver">v0.001</p></div></div>
 <script>if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'); if (location.hash === '#debug') document.body.classList.add('debug');</script>
-<script src="night.js"></script>
+<script src="night.js?v=0.001"></script>
 </body>
 </html>
