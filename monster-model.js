@@ -180,11 +180,19 @@ const _fwd = new THREE.Vector3(), _tgt = new THREE.Vector3(), _fz = new THREE.Ve
 function faceTarget(M, camera, d, max) {
   const split = !!M.meta.split;
   camera.getWorldDirection(_fwd);
-  _tgt.copy(camera.position).addScaledVector(_fwd, d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, -0.1);
+  _tgt.copy(camera.position).addScaledVector(_fwd, d + 0.75 * M.meta.headL - 0.28).addScaledVector(_cu.set(0, 1, 0).applyQuaternion(camera.quaternion), -0.1); // eyes a little above the middle of the screen
   const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
+  // the mouth's middle looks straight at you and the head stands upright on the screen (no roll): the head's own frame
+  // (mouth direction, its up, its right) is turned onto the camera's (toward you, the screen's up, the screen's right)
   _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
-  _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
+  _fy.fromArray(M.meta.headY).multiplyScalar(Math.cos(half)).addScaledVector(_fx.fromArray(M.meta.headZ), Math.sin(half)); _fy.addScaledVector(_fz, -_fy.dot(_fz)).normalize();
+  _fx.crossVectors(_fy, _fz);
+  _qm.setFromRotationMatrix(_mb.makeBasis(_fx, _fy, _fz));
+  _to.copy(camera.position).sub(_tgt).normalize(); _cu.set(0, 1, 0).applyQuaternion(camera.quaternion); _cu.addScaledVector(_to, -_cu.dot(_to)).normalize();
+  _cr.crossVectors(_cu, _to);
+  _qt.setFromRotationMatrix(_mb.makeBasis(_cr, _cu, _to)).multiply(_qm.invert());
 }
+const _fy = new THREE.Vector3(), _fx = new THREE.Vector3(), _cu = new THREE.Vector3(), _cr = new THREE.Vector3(), _qm = new THREE.Quaternion(), _mb = new THREE.Matrix4();
 // start it from where the thing stood (base: ground point; qs: turned to face you)
 export function startScare(M, base, qs, opts = {}) {
   M.sc = { t: 0, fired: {}, base: base.clone(), qs: qs.clone(), d: opts.d ?? FAST.d, thr: { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() } };
@@ -209,11 +217,12 @@ export function scareStep(M, camera, dt, on) {
   const P = _p.copy(start).lerp(_tgt, u);
   M.root.quaternion.copy(s.qs).slerp(_qt, u);
   // thrashing: the head swings wide (the roll widest), a little slower than a shudder
-  const T = s.thr, sh = 0.55;
+  const T = s.thr, sh = 0.55, shutK = E >= shutT ? Math.min(1, ((E - shutT) / SNAP.close) ** 2) : 0;
   if (u >= 1) {
     T.t -= dt;
     if (T.t <= 0) { T.t = 0.045 + Math.random() * 0.03; T.goal.set((Math.random() - 0.5) * 0.6 * sh, (Math.random() - 0.5) * 0.6 * sh, (Math.random() - 0.5) * 1.6 * sh); T.pg.set((Math.random() - 0.5) * 0.12 * sh, (Math.random() - 0.5) * 0.1 * sh); }
     const kk = Math.min(1, dt * 32); T.cur.lerp(T.goal, kk); T.pc.lerp(T.pg, kk);
+    if (shutK > 0) { T.cur.multiplyScalar(1 - shutK); T.pc.multiplyScalar(1 - shutK); T.goal.set(0, 0, 0); T.pg.set(0, 0); } // square on for the bite
     P.addScaledVector(_hy.set(1, 0, 0).applyQuaternion(camera.quaternion), T.pc.x).addScaledVector(camera.up, T.pc.y);
   }
   M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));

@@ -2638,6 +2638,7 @@ if (DEBUG) {
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
+    monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
     fakeChance: (k) => { NL.scare.fake.chance = k; },
     fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp }),
     shootMonster: () => { const c = monster; if (c && !c.gone) { nightHit(c); return true; } return false; }, hitFight: () => fightHit(),
