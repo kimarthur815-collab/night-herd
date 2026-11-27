@@ -22,5 +22,5 @@ const parts = i32 ? [idx, pos, nrm, att] : [pos, idx, nrm, att];
 const total = parts.reduce((s, a) => s + a.byteLength, 0), buf = Buffer.alloc(total);
 let o = 0;
 for (const a of parts) { Buffer.from(a.buffer, a.byteOffset, a.byteLength).copy(buf, o); o += a.byteLength; }
-writeFileSync('lantern/hand.json', JSON.stringify({ vc, ic, i32, ps: 1 / PS, data: buf.toString('base64') }));
+writeFileSync('night/hand.json', JSON.stringify({ vc, ic, i32, ps: 1 / PS, data: buf.toString('base64') }));
 console.log(`hand: ${vc} verts, ${ic / 3} tris, ${(total / 1048576).toFixed(2)} MB, ${Date.now() - t0} ms`);

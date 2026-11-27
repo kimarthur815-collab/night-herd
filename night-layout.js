@@ -34,6 +34,7 @@ export const NL = {
   walk: { speed: 1.4, turn: 0.6 }, // 임시: walking to the next place: m/s, and how far you turn toward where you walk (radians)
   countLight: 0.3, // a cow is counted only if the lantern's light reaches it (첫 슬라이스와 같은 값); never while the lantern is out
   hint: { idle: 12, misses: 3 }, // 임시: say the how-to line again after this many seconds doing nothing, or this many taps on nothing
+  matches: 1, // 성냥: 랜턴이 꺼지면 한 번 다시 켤 수 있다 (사용자). 채우는 곳은 마을 상점 (아직 없음)
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")
   endWait: 3.5, // 임시: seconds after the last place is counted before the night fades out (stage 1 ends there)
   lines: { // the cowboy's lines; the brackets are the how-to
@@ -42,6 +43,9 @@ export const NL = {
     countPC: '하나씩 세자 (소를 보고 클릭)', // 임시
     next: '다음 줄로 가자 (화면을 왼쪽으로 넘기기)', // 임시
     nextPC: '다음 줄로 가자 (D나 →)', // 임시
+    match: '성냥을 켜자 (왼쪽을 위로 쓸기)', // 임시: the first time the lantern goes out
+    matchPC: '성냥을 켜자 (F)', // 임시
+    noMatch: '성냥이 없다.', // 임시
   },
   clear: { x0: -9, x1: 22, z0: -40 }, // no saguaros or brush in the camp, the herd and the near side of the rise
   seed: 41, // the herd stands the same way every time

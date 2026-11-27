@@ -21,5 +21,5 @@ function save(file, sdf, bmin, bmax, origin) {
   writeFileSync(file, JSON.stringify({ vc, ic, i32, ps: 1 / PS, origin, data: buf.toString('base64') }));
   console.log(`${file}: ${vc} verts, ${ic / 3} tris, ${(total / 1048576).toFixed(2)} MB, ${Date.now() - t0} ms`);
 }
-save('lantern/gunhand.json', (x, y, z) => hand.glove(x, y, z), [-0.05, -0.16, -0.03], [0.075, -0.0, 0.16], [0, 0, 0]);
-save('lantern/gunthumb.json', (x, y, z) => hand.thumb(x, y, z), [-0.05, -0.06, -0.06], [0.0, 0.01, 0.06], hand.thumbPivot);
+save('night/gunhand.json', (x, y, z) => hand.glove(x, y, z), [-0.05, -0.16, -0.03], [0.075, -0.0, 0.16], [0, 0, 0]);
+save('night/gunthumb.json', (x, y, z) => hand.thumb(x, y, z), [-0.05, -0.06, -0.06], [0.0, 0.01, 0.06], hand.thumbPivot);

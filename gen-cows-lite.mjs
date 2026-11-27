@@ -7,9 +7,9 @@ import { MeshoptSimplifier } from 'meshoptimizer';
 const ERR = Number(process.argv[2] || 0.0025), OUT = process.argv[3] || 'monsters/cows';
 mkdirSync(OUT, { recursive: true });
 await MeshoptSimplifier.ready;
-const meta = JSON.parse(readFileSync('lantern/cows/cows.json', 'utf8')), out = [];
+const meta = JSON.parse(readFileSync('night/cows/cows.json', 'utf8')), out = [];
 for (const m of meta) {
-  const buf = Buffer.from(JSON.parse(readFileSync('lantern/' + m.file, 'utf8')).data, 'base64');
+  const buf = Buffer.from(JSON.parse(readFileSync('night/' + m.file, 'utf8')).data, 'base64');
   const ab = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength), vc = m.vc, ic = m.ic;
   let o = 0; const take = (T, n, size) => { const a = new T(ab.slice(o, o + n * size)); o += n * size; return a; };
   const pos = take(Int16Array, vc * 3, 2), head = take(Int16Array, vc * 3, 2), idx = take(Uint16Array, ic, 2);

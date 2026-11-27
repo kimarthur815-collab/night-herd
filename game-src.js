@@ -19,7 +19,6 @@ import { NL, hillH } from './night-layout.js';
 
 const DEBUG = location.hash === '#debug';
 const GUN = !WALK && !WITH_COUNTING; // the lantern slice and the night: lantern in the left hand, revolver in the right
-const ASSET = NIGHT_SCENE ? '../lantern/' : ''; // the night page uses the lantern slice's baked cows, hands, plants and revolver
 const groundH = (x, z) => (NIGHT_SCENE ? Math.max(0, hillH(x, z)) : 0);
 THREE.ShaderChunk.lights_pars_begin = THREE.ShaderChunk.lights_pars_begin.replace(
   'float distanceFalloff = 1.0 / max( pow( lightDistance, decayExponent ), 0.01 );',
@@ -197,10 +196,10 @@ function cowMaterial(coat, face, phase) {
 }
 
 async function loadVariants(onProgress) {
-  const meta = await (await fetch(ASSET + 'cows/cows.json')).json();
+  const meta = await (await fetch('cows/cows.json')).json();
   let done = 0;
   return Promise.all(meta.map(async (m) => {
-    const j = await (await fetch(ASSET + m.file)).json();
+    const j = await (await fetch(m.file)).json();
     const raw = atob(j.data);
     const u8 = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
@@ -958,7 +957,7 @@ function parseHand(j, mirror) {
   return g;
 }
 async function loadHand() {
-  const j = await (await fetch(ASSET + 'hand.json')).json();
+  const j = await (await fetch('hand.json')).json();
   handPivot.add(new THREE.Mesh(parseHand(j, MX < 0), handMaterial()));
 }
 // ---------------- the revolver in the right hand ----------------
@@ -997,7 +996,7 @@ function makeGun() {
   armR = makeArmRig(GARM, gunPivot);
 }
 async function loadGunHand() {
-  const [h, t, r] = await Promise.all([...['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(ASSET + f)).json()), loadRevolver(ASSET + 'revolver/colt75.json')]);
+  const [h, t, r] = await Promise.all([...['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(f)).json()), loadRevolver('revolver/colt75.json')]);
   rev = r; gunPivot.add(rev.group); MUZZLE_Z = rev.muzzle.z; flashV.position.z = MUZZLE_Z - 0.035;
   // polished steel shows what it reflects: the night, and the lantern held off to the left
   const env = makeRevolverEnvironments(renderer, ['night']).night, mats = new Set();
@@ -1346,7 +1345,7 @@ function updateAdapt(dt) {
 
 
 // ---------------- lantern: state, oil, wind, relighting ----------------
-const lamp = { on: true, level: 1, oil: 1, mode: 'on', t: 0, gustT: -1, gustTimer: rand(35, 70), sputter: 0 };
+const lamp = { on: true, level: 1, oil: 1, mode: 'on', t: 0, gustT: -1, gustTimer: rand(35, 70), sputter: 0, matches: NIGHT_SCENE ? NL.matches : 0, outOnce: false };
 let raiseKey = false, raiseMouse = false, raiseTouch = false, raiseT = 0, raisedFor = 0;
 let ended = false, nightT = 0, subTimer = 0;
 function say(text, secs = 2.6) { ui.sub.textContent = text; ui.sub.classList.add('show'); subTimer = secs; }
@@ -1354,13 +1353,17 @@ function nearFire() { return Math.hypot(player.pos.x - FIRE_POS.x, player.pos.z 
 function goOut(cause) {
   if (lamp.mode === 'off' || lamp.mode === 'dying') return;
   lamp.mode = 'dying'; lamp.t = 0; lamp.cause = cause;
+  if (NIGHT_SCENE && !lamp.outOnce && lamp.matches > 0) { lamp.outOnce = true; setTimeout(() => say(TOUCH ? NL.lines.match : NL.lines.matchPC, 3.2), 1600); } // the how-to, the first time only
   if (cause !== 'hand') sound.puff();
 }
 function lampAction() {
   if (!started) return;
-  if (lamp.mode === 'on') { lamp.mode = 'turning'; lamp.t = 0; sound.click(); return; }
+  if (lamp.mode === 'on') { lamp.mode = 'turning'; lamp.t = 0; sound.click(); if (NIGHT_SCENE && !lamp.outOnce && lamp.matches > 0) { lamp.outOnce = true; setTimeout(() => say(TOUCH ? NL.lines.match : NL.lines.matchPC, 3.2), 1400); } return; }
   if (lamp.mode === 'off') {
-    if (NIGHT_SCENE) { lamp.mode = 'up'; lamp.t = 0; sound.click(); return; } // 임시: in the night the wick is turned back up where you stand
+    if (NIGHT_SCENE) { // the night: strike a match (only so many; none at the campfire)
+      if (lamp.matches > 0) { lamp.matches--; lamp.mode = 'up'; lamp.t = 0; } else say(NL.lines.noMatch, 2.4);
+      return;
+    }
     if (nearFire()) { lamp.mode = 'relight'; lamp.t = 0; }
     else say('모닥불에서만 다시 켤 수 있어요');
   }
@@ -1380,9 +1383,10 @@ function lampStep(dt) {
   } else if (lamp.mode === 'turning') { // wick turned down by hand
     lamp.level = Math.max(0, 1 - lamp.t / 0.6);
     if (lamp.t >= 0.6) { lamp.mode = 'off'; lamp.level = 0; sound.puff(); }
-  } else if (lamp.mode === 'up') { // the night: the wick turned back up
-    lamp.level = Math.min(1, lamp.t / 0.6);
-    if (lamp.t >= 0.6) { lamp.mode = 'on'; lamp.level = 1; }
+  } else if (lamp.mode === 'up') { // the night: a match struck, the wick catches (임시: no match in the hand yet, the campfire's catch sound)
+    if (lamp.t >= 0.35 && lamp.t - dt < 0.35) sound.whoosh();
+    lamp.level = lamp.t < 0.35 ? 0 : Math.min(1, (lamp.t - 0.35) / 0.6);
+    if (lamp.t >= 0.95) { lamp.mode = 'on'; lamp.level = 1; }
   } else if (lamp.mode === 'dying') { // wind or empty fount: a few last flickers
     const d = lamp.cause === 'oil' ? 1.6 : 0.5;
     lamp.level = Math.max(0, (1 - lamp.t / d) * (Math.random() < 0.5 ? 1 : 0.3));
@@ -1394,7 +1398,7 @@ function lampStep(dt) {
   }
   // wind gusts
   lamp.gustTimer -= dt;
-  if (lamp.gustTimer <= 0 && lamp.gustT < 0 && !NIGHT_SCENE) { lamp.gustT = 0; lamp.gustTimer = rand(45, 110); sound.gust(); } // 임시: no gusts in the night yet
+  if (lamp.gustTimer <= 0 && lamp.gustT < 0) { lamp.gustT = 0; lamp.gustTimer = rand(45, 110); sound.gust(); }
   if (lamp.gustT >= 0) {
     lamp.gustT += dt;
     if (lamp.gustT > 2.3) { lamp.gustT = -1; if (lamp.mode === 'on' && Math.random() < 0.5) goOut('wind'); }
@@ -2143,8 +2147,8 @@ function frameWalk(now) {
     const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1 + (GUN ? 1 : 0);
     const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
     const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
-      Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`${ASSET}plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
-      Promise.all(BONE_PIECES.map((k) => loadSculpt(`${ASSET}plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
+      Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
+      Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
       GUN ? loadGunHand().then(bump) : Promise.resolve()]);
     saguaroField = new SaguaroField(sculpts, plantClear);
     scene.add(saguaroField.group);
@@ -2292,7 +2296,7 @@ if (DEBUG) {
     relight: () => lampAction(),
     night: () => { nightT = 1; },
     // the night scene
-    nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
+    nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
       cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), counted: c.counted })) }),
     tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },
     eyes: () => cows.map((c) => [+c.y0.toFixed(2), +c.mesh.rotation.x.toFixed(2), +c.eyeWorld.y.toFixed(2), +c.eyeWorld.z.toFixed(2), +c.mesh.position.z.toFixed(2)]),

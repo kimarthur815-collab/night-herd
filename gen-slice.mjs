@@ -1,8 +1,8 @@
 // Bake rest-pose cows with rig weights (head, neck, tail, legs).
-// usage: node gen-slice.mjs [step=0.012] [outDir=slice/cows]
+// usage: node gen-slice.mjs [step=0.012] [outDir=night/cows]
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { Cow, meshCow } from './cow.js';
-const OUT = process.argv[3] || 'slice/cows';
+const OUT = process.argv[3] || 'night/cows';
 mkdirSync(OUT, { recursive: true });
 const step = Number(process.argv[2] || 0.012);
 const VARIANTS = [
