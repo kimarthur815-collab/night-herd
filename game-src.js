@@ -1184,6 +1184,9 @@ function cowStep(c, dt, time) {
     const lead = c.turnLead || 0;
     ai.yaw = damp(ai.yaw, Math.abs(lead) > 0.15 ? lead : clamp(y, -0.6, 0.6), 3, dt); ai.pitch = damp(ai.pitch, -0.08, 3, dt);
     ai.t = Math.min(ai.t, 1.5);
+  } else if ((c.stir || 0) > 0.15 || (c.speed || 0) > 0.25) { // going along with the herd: head up, looking where it walks
+    ai.yaw = damp(ai.yaw, c.turnLead || 0, 3, dt); ai.pitch = damp(ai.pitch, (c.speed || 0) > 0.25 ? -0.2 : -0.06, 2.5, dt);
+    ai.t = Math.min(ai.t, 1.5);
   } else {
     ai.t -= dt;
     if (ai.t <= 0) {
@@ -1605,32 +1608,156 @@ function setupDay() {
   U.uEyeGain.value = 0; U.uEyeSelf.value = 0;
   finalPass.uniforms.uExp.value = DAYLOOK.exp;
 }
+// a cow's footprint on the ground: a body capsule, and a neck-and-head capsule that swings with the head
+function cowCaps(c) {
+  const p = c.mesh.position, s = c.s, sh = Math.sin(c.heading), ch = Math.cos(c.heading);
+  const k = c.caps || (c.caps = new Float64Array(10));
+  k[0] = p.x - sh * 0.67 * s; k[1] = p.z - ch * 0.67 * s; k[2] = p.x + sh * 0.37 * s; k[3] = p.z + ch * 0.37 * s; k[4] = 0.33 * s;
+  const yaw = c.ai.yaw, lx = Math.sin(yaw) * 0.62, lz = 0.58 + Math.cos(yaw) * 0.62;
+  k[5] = p.x + sh * 0.62 * s; k[6] = p.z + ch * 0.62 * s;
+  k[7] = p.x + (ch * lx + sh * lz) * s; k[8] = p.z + (-sh * lx + ch * lz) * s; k[9] = 0.2 * s;
+  return k;
+}
+// closest points of two segments on the ground (Ericson); leaves the vector from the second to the first in colNx/colNz, its length in colD
+let colNx = 0, colNz = 0, colD = 0;
+function segClosest(p1x, p1z, q1x, q1z, p2x, p2z, q2x, q2z) {
+  const d1x = q1x - p1x, d1z = q1z - p1z, d2x = q2x - p2x, d2z = q2z - p2z, rx = p1x - p2x, rz = p1z - p2z;
+  const a = d1x * d1x + d1z * d1z, e = d2x * d2x + d2z * d2z, f = d2x * rx + d2z * rz;
+  let s = 0, t = 0;
+  if (a <= 1e-9 && e > 1e-9) t = clamp(f / e, 0, 1);
+  else if (a > 1e-9) {
+    const c = d1x * rx + d1z * rz;
+    if (e <= 1e-9) s = clamp(-c / a, 0, 1);
+    else {
+      const b = d1x * d2x + d1z * d2z, den = a * e - b * b;
+      s = den > 1e-9 ? clamp((b * f - c * e) / den, 0, 1) : 0;
+      t = (b * s + f) / e;
+      if (t < 0) { t = 0; s = clamp(-c / a, 0, 1); } else if (t > 1) { t = 1; s = clamp((b - c) / a, 0, 1); }
+    }
+  }
+  colNx = p1x + d1x * s - (p2x + d2x * t); colNz = p1z + d1z * s - (p2z + d2z * t);
+  colD = Math.hypot(colNx, colNz);
+}
+// the smallest gap between any two cows right now (negative = overlapping), for testing
+function herdGap() {
+  for (const c of cows) cowCaps(c);
+  let g = 99;
+  for (let i = 0; i < cows.length; i++) for (let j = i + 1; j < cows.length; j++) {
+    const a = cows[i].caps, b = cows[j].caps;
+    for (let u = 0; u < 10; u += 5) for (let v = 0; v < 10; v += 5) {
+      segClosest(a[u], a[u + 1], a[u + 2], a[u + 3], b[v], b[v + 1], b[v + 2], b[v + 3]);
+      g = Math.min(g, colD - a[u + 4] - b[v + 4]);
+    }
+  }
+  return g;
+}
+// temporary values to confirm: a cow follows others walking within 8 m and copies 90% of their walking,
+// unease spreads to cows within 9 m and fades about 3 s after you stop pushing, a cow more than 6 m from the herd hurries back
+const ALIGN_R = 8.0, ALIGN_K = 0.9, STIR_R = 9.0;
+function shiftCow(c, dx, dz) {
+  c.mesh.position.x += dx; c.mesh.position.z += dz;
+  const k = c.caps; k[0] += dx; k[1] += dz; k[2] += dx; k[3] += dz; k[5] += dx; k[6] += dz; k[7] += dx; k[8] += dz;
+  c.shoveX += dx; c.shoveZ += dz;
+}
+// bodies can't pass through each other or through a saguaro: whatever overlaps is pushed apart
+function separateCows() {
+  const pc = PLANT_U.uPC.value;
+  for (const c of cows) cowCaps(c);
+  for (let it = 0; it < 4; it++) {
+    let moved = false;
+    for (let i = 0; i < cows.length; i++) {
+      const A = cows[i], pa = A.mesh.position, ka = A.caps;
+      for (let j = i + 1; j < cows.length; j++) {
+        const B = cows[j], pb = B.mesh.position, kb = B.caps;
+        if (Math.abs(pa.x - pb.x) > 4.5 || Math.abs(pa.z - pb.z) > 4.5) continue;
+        for (let u = 0; u < 10; u += 5) for (let v = 0; v < 10; v += 5) {
+          segClosest(ka[u], ka[u + 1], ka[u + 2], ka[u + 3], kb[v], kb[v + 1], kb[v + 2], kb[v + 3]);
+          const m = ka[u + 4] + kb[v + 4];
+          if (colD >= m) continue;
+          let nx = colNx, nz = colNz, l = colD;
+          if (l < 1e-5) { nx = pa.x - pb.x; nz = pa.z - pb.z; l = Math.hypot(nx, nz); if (l < 1e-5) { nx = 1; nz = 0; l = 1; } }
+          nx /= l; nz /= l;
+          const pen = m - colD + 0.002;
+          // the one walking into the other gives way most; one standing still is only nudged
+          const wa = (A.speed + 0.15) / (A.speed + B.speed + 0.3);
+          shiftCow(A, nx * pen * wa, nz * pen * wa);
+          shiftCow(B, -nx * pen * (1 - wa), -nz * pen * (1 - wa));
+          moved = true;
+        }
+      }
+    }
+    for (const c of cows) {
+      const k = c.caps, p = c.mesh.position;
+      for (const sg of SAGUAROS) {
+        const sx = sg.x + Math.round((pc.x - sg.x) / PLANT_PER) * PLANT_PER, sz = sg.z + Math.round((pc.y - sg.z) / PLANT_PER) * PLANT_PER;
+        if (Math.abs(sx - p.x) > 3 || Math.abs(sz - p.z) > 3) continue;
+        for (let u = 0; u < 10; u += 5) {
+          segClosest(k[u], k[u + 1], k[u + 2], k[u + 3], sx, sz, sx, sz);
+          const m = k[u + 4] + sg.r;
+          if (colD >= m) continue;
+          let nx = colNx, nz = colNz, l = colD;
+          if (l < 1e-5) { nx = p.x - sx; nz = p.z - sz; l = Math.hypot(nx, nz) || 1; }
+          shiftCow(c, (nx / l) * (m - colD + 0.002), (nz / l) * (m - colD + 0.002));
+          moved = true;
+        }
+      }
+    }
+    if (!moved) break;
+  }
+}
 function herdStep(dt) {
   let cx = 0, cz = 0;
-  for (const c of cows) { cx += c.mesh.position.x; cz += c.mesh.position.z; }
+  for (const c of cows) { cx += c.mesh.position.x; cz += c.mesh.position.z; cowCaps(c); }
   cx /= cows.length; cz /= cows.length;
   const pc = PLANT_U.uPC.value;
+  // you: inside its flight zone, a cow wants to walk away from you, faster the closer you are
   for (const c of cows) {
-    const p = c.mesh.position;
-    let vx = 0, vz = 0;
-    // you: inside its flight zone, a cow walks away from you, faster the closer you are
-    const dx = p.x - player.pos.x, dz = p.z - player.pos.z, d = Math.hypot(dx, dz);
-    const press = d < FLIGHT_R && d > 1e-3 ? (FLIGHT_R - d) / FLIGHT_R : 0;
-    if (press > 0) { vx += (dx / d) * press * 2.2; vz += (dz / d) * press * 2.2; }
-    c.alarm = Math.max(c.alarm - dt * 0.25, press); // stays uneasy for a few seconds
-    // the herd: drift back toward the others, keep a little space
-    const hx = cx - p.x, hz = cz - p.z, hd = Math.hypot(hx, hz);
-    if (hd > 6) { const k = 0.25 * Math.min(1, (hd - 6) / 6); vx += (hx / hd) * k; vz += (hz / hd) * k; }
+    const p = c.mesh.position, dx = p.x - player.pos.x, dz = p.z - player.pos.z, d = Math.hypot(dx, dz);
+    c.press = d < FLIGHT_R && d > 1e-3 ? (FLIGHT_R - d) / FLIGHT_R : 0;
+    c.pdx = d > 1e-3 ? dx / d : 0; c.pdz = d > 1e-3 ? dz / d : 0;
+  }
+  // the herd moves as one: a cow near one that's on the move is stirred too, a little less, so it
+  // goes along with the others; once you leave them be it fades over a few seconds
+  for (const c of cows) {
+    let t = clamp(c.press * 4, 0, 1);
     for (const o of cows) {
       if (o === c) continue;
-      const ex = p.x - o.mesh.position.x, ez = p.z - o.mesh.position.z, e = Math.hypot(ex, ez);
-      if (e < 2.2 && e > 1e-3) { const k = ((2.2 - e) / 2.2) * 0.9; vx += (ex / e) * k; vz += (ez / e) * k; }
+      const e = Math.hypot(c.mesh.position.x - o.mesh.position.x, c.mesh.position.z - o.mesh.position.z);
+      if (e < STIR_R) t = Math.max(t, o.stir * 0.9 * Math.min(1, (STIR_R - e) / (STIR_R - 3)));
     }
+    c.stirGoal = t;
+  }
+  for (const c of cows) c.stir = c.stirGoal > c.stir ? Math.min(c.stirGoal, c.stir + dt * 2.0) : Math.max(c.stirGoal, c.stir - dt * 0.3);
+  for (const c of cows) {
+    const p = c.mesh.position, k = c.caps;
+    let vx = 0, vz = 0;
+    if (c.press > 0) { vx += c.pdx * c.press * 2.2; vz += c.pdz * c.press * 2.2; }
+    c.alarm = Math.max(c.alarm - dt * 0.25, c.press); // stays uneasy for a few seconds
+    // don't get left behind: the further out from the others, the more it hurries back
+    const hx = cx - p.x, hz = cz - p.z, hd = Math.hypot(hx, hz);
+    if (hd > 6) { const g = 0.9 * Math.min(1, (hd - 6) / 8); vx += (hx / hd) * g; vz += (hz / hd) * g; }
+    let ax = 0, az = 0, aw = 0;
+    for (const o of cows) {
+      if (o === c) continue;
+      const op = o.mesh.position, e = Math.hypot(p.x - op.x, p.z - op.z);
+      // walk the way the others around it are walking
+      if (e < ALIGN_R && o.speed > 0.08) { const w = 1 - e / ALIGN_R; ax += Math.sin(o.heading) * o.speed * w; az += Math.cos(o.heading) * o.speed * w; aw += w; }
+      // keep a little space, measured body to body rather than centre to centre, so none walks its nose into another's tail
+      if (e < 4.5) {
+        const ko = o.caps;
+        for (let u = 0; u < 10; u += 5) for (let v = 0; v < 10; v += 5) {
+          segClosest(k[u], k[u + 1], k[u + 2], k[u + 3], ko[v], ko[v + 1], ko[v + 2], ko[v + 3]);
+          const G = u + v === 0 ? 0.9 : 0.45, gap = colD - k[u + 4] - ko[v + 4];
+          if (gap < G && colD > 1e-5) { const g = ((G - gap) / G) * 0.9; vx += (colNx / colD) * g; vz += (colNz / colD) * g; }
+        }
+      }
+    }
+    if (aw > 0) { const g = (ALIGN_K * c.stir * Math.min(1, aw / 0.6)) / aw; vx += ax * g; vz += az * g; }
     // cactus: walk around it
     for (const sg of SAGUAROS) {
       const sx = sg.x + Math.round((pc.x - sg.x) / PLANT_PER) * PLANT_PER, sz = sg.z + Math.round((pc.y - sg.z) / PLANT_PER) * PLANT_PER;
       const ex = p.x - sx, ez = p.z - sz, e = Math.hypot(ex, ez);
-      if (e < 1.8 && e > 1e-3) { const k = ((1.8 - e) / 1.8) * 1.2; vx += (ex / e) * k; vz += (ez / e) * k; }
+      if (e < 1.8 && e > 1e-3) { const g = ((1.8 - e) / 1.8) * 1.2; vx += (ex / e) * g; vz += (ez / e) * g; }
     }
     // smooth what it wants, so it doesn't twitch each time you move
     c.wx = damp(c.wx, vx, 2.5, dt); c.wz = damp(c.wz, vz, 2.5, dt);
@@ -1650,10 +1777,15 @@ function herdStep(dt) {
     const goal = want > 0.15 ? Math.min(WALK_MAX, want) * (0.2 + 0.8 * Math.max(0, Math.cos(dh))) : 0;
     c.speed = damp(c.speed, goal, 1.6, dt);
     p.x += sh1 * c.speed * dt; p.z += ch1 * c.speed * dt;
-    c.mesh.rotation.y = c.heading;
     c.turnLead = clamp(dh, -0.6, 0.6) * Math.min(1, want);
-    // the legs keep stepping while it turns, not only while it walks forward
-    const stepRate = c.speed + Math.abs(c.turnVel) * 0.55;
+  }
+  separateCows();
+  for (const c of cows) {
+    const p = c.mesh.position;
+    c.mesh.rotation.y = c.heading;
+    // the legs keep stepping while it turns or gets jostled, not only while it walks forward
+    const shove = Math.min(0.8, Math.hypot(c.shoveX, c.shoveZ) / Math.max(dt, 1e-3)); c.shoveX = 0; c.shoveZ = 0;
+    const stepRate = c.speed + Math.abs(c.turnVel) * 0.55 + shove;
     c.gait = damp(c.gait, clamp(stepRate / 0.9, 0, 1), 4, dt);
     c.gaitPhase += (stepRate * dt) / STRIDE;
     p.y = -0.012 * c.gait * (0.5 - 0.5 * Math.cos(c.gaitPhase * Math.PI * 4)); // the back dips twice a stride
@@ -1720,6 +1852,7 @@ function frameWalk(now) {
         mesh, s: h.s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(),
         aimPoints: [new THREE.Vector3(0, 1.0, 0.0), new THREE.Vector3(0, 1.0, 0.6), new THREE.Vector3(0, 1.0, -0.6), new THREE.Vector3(0, 1.15, 1.1)],
         heading: mesh.rotation.y, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
+        stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null,
         ai: { t: rand(0, 3), yaw: rand(-0.4, 0.4), pitch: rand(-0.9, 0.0), tYaw: 0, tPitch: -0.5, flick: 0 },
       });
     });
@@ -1786,6 +1919,25 @@ if (DEBUG) {
     countAll: () => { countReadyAt = 0; for (const c of cows) c.lit = 2; },
     setCount: (n) => { count = n; },
     herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2), +c.heading.toFixed(2)]),
+    gap: () => herdGap(),
+    herdRaw: () => cows.map((c) => [c.mesh.position.x, c.mesh.position.z, c.heading, c.stir, c.speed]),
+    // run the day herd without drawing: hold a key for `secs` (or nothing), at a fixed 60 steps a second
+    sim: (secs, code, yaw) => {
+      if (yaw !== undefined) player.yaw = yaw;
+      if (code) keys.add(code);
+      const dt = 1 / 60, start = cows.map((c) => c.mesh.position.clone());
+      let minGap = 99, t = 0, overlapSteps = 0;
+      for (; t < secs; t += dt) {
+        movePlayer(dt); herdStep(dt); for (const c of cows) cowStep(c, dt, t);
+        const g = herdGap(); minGap = Math.min(minGap, g); if (g < -0.02) overlapSteps++;
+      }
+      if (code) keys.delete(code);
+      const moved = cows.map((c, i) => +c.mesh.position.distanceTo(start[i]).toFixed(1));
+      let cx = 0, cz = 0; for (const c of cows) { cx += c.mesh.position.x; cz += c.mesh.position.z; } cx /= cows.length; cz /= cows.length;
+      const spread = Math.max(...cows.map((c) => Math.hypot(c.mesh.position.x - cx, c.mesh.position.z - cz)));
+      return { minGap: +minGap.toFixed(3), overlapSteps, moved, centre: [+cx.toFixed(1), +cz.toFixed(1)], spread: +spread.toFixed(1),
+        speeds: cows.map((c) => +c.speed.toFixed(2)), player: [+player.pos.x.toFixed(1), +player.pos.z.toFixed(1)] };
+    },
     tumbles: () => tumbles.map((t) => [+t.pos.x.toFixed(1), +t.pos.z.toFixed(1), +t.speed.toFixed(2)]),
     lightAt: (i) => lanternLightAt(cows[i].mesh.localToWorld(new THREE.Vector3(0, 1, 0))),
     goto: (x, z, yaw, pitch) => { player.pos.set(x, 0, z); player.yaw = yaw; player.pitch = pitch ?? 0; },
