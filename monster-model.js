@@ -195,7 +195,7 @@ function faceTarget(M, camera, d, max) {
 const _fy = new THREE.Vector3(), _fx = new THREE.Vector3(), _cu = new THREE.Vector3(), _cr = new THREE.Vector3(), _qm = new THREE.Quaternion(), _mb = new THREE.Matrix4();
 // start it from where the thing stood (base: ground point; qs: turned to face you)
 export function startScare(M, base, qs, opts = {}) {
-  M.sc = { t: 0, fired: {}, base: base.clone(), qs: qs.clone(), d: opts.d ?? FAST.d, leap: opts.leap ?? null, travel: opts.leap ? opts.leap.travel : FAST.travel, thr: { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() } };
+  M.sc = { t: 0, fired: {}, base: base.clone(), qs: qs.clone(), d: opts.d ?? FAST.d, leap: opts.leap ?? null, travel: opts.travel ?? (opts.leap ? opts.leap.travel : FAST.travel), thr: { t: 0, goal: new THREE.Vector3(), cur: new THREE.Vector3(), pg: new THREE.Vector2(), pc: new THREE.Vector2() } };
   M.root.visible = true;
 }
 // one step; events: roar (it comes), cut (the jaws shut: black), back (light returns), done. Returns { fade, shake } or null when over
@@ -212,7 +212,7 @@ export function scareStep(M, camera, dt, on) {
   if (E >= cutT) return { fade: E < back0 ? 1 : 1 - ease((E - back0) / (back1 - back0)), shake: 0 };
   const H0 = _h0.fromArray(M.meta.headPivot), max = split ? 0.6 : 0.95;
   faceTarget(M, camera, s.d, max);
-  const u = easeOut(E / s.travel), v = Math.min(1, E / s.travel);
+  const v = Math.min(1, E / s.travel), u = closeIn(v);
   const start = _q.copy(H0).applyQuaternion(s.qs).add(s.base);
   const P = _p.copy(start).lerp(_tgt, u);
   M.root.quaternion.copy(s.qs).slerp(_qt, u);
@@ -227,10 +227,12 @@ export function scareStep(M, camera, dt, on) {
     P.addScaledVector(_hy.set(1, 0, 0).applyQuaternion(camera.quaternion), T.pc.x).addScaledVector(camera.up, T.pc.y);
   }
   M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
+  twistOn(M, u);
   o.uHeadRot.value.copy(T.cur);
   let jaw = max * (u >= 1 ? 0.85 + 0.15 * Math.sin(E * 33) : u);
   if (E >= shutT) { const k = Math.min(1, ((E - shutT) / SNAP.close) ** 2); o.uHeadRot.value.multiplyScalar(1 - k); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; M.root.position.addScaledVector(_fwd, SNAP.pull * k); } // shut where you can see it
   o.uJaw.value = jaw;
+  o.uHeadRot.value.z += (M.twist ?? 0) * (1 - u); o.uHeadRot.value.y += M.hang ?? 0; // the broken neck (at your face the whole of it is turned, see twistOn)
   // close up, the eyes must not wash out the face
   const dHead = camera.position.distanceTo(_p.copy(H0).applyQuaternion(M.root.quaternion).add(M.root.position)), dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
@@ -259,10 +261,20 @@ export function idleStep(M, dt, t) {
 // shut and in that instant everything is black. Events: freeze, roar, black. Returns { fade, shake } (fade 1 = black)
 const EAT = { snap: 0.45, lunge: 0.72, shut: 1.02, black: 1.11 };
 // 사용자: 멈추지 않고 달려와 그대로 뛰어 덮침 — a beat to gather (s), in the air until (s), at your face until (s), black at (s) (임시)
-const RUN = { snap: 0.1, lunge: 0.46, shut: 0.6, black: 0.69 };
+const RUN = { snap: 0.1, lunge: 0.62, shut: 0.76, black: 0.85 }; // (사용자: 얼굴이 서서히, 그러다 빠르게 다가옴 — 공중 시간을 늘림)
+const closeIn = (v) => Math.pow(Math.min(1, Math.max(0, v)), 2.5); // 사용자: slow at first, then fast onto your face
 export function startEat(M, opts = {}) { M.eat = { t: 0, fired: {}, p0: M.root.position.clone(), q0: M.root.quaternion.clone(), leap: opts.leap ?? null, T: opts.run ? RUN : EAT, run: !!opts.run, d: opts.d ?? 0.62 }; }
 // a leap: up in an arc on the way (highest halfway), the head thrown up as it rises and brought down onto you
 const _la = new THREE.Vector3(), _lq = new THREE.Quaternion(), _lu = new THREE.Vector3(0, 1, 0);
+// the broken neck at your face: the whole thing turned over on its side about the point between its eyes, so the eyes stay
+// square in the middle of the screen
+const _tf = new THREE.Vector3(), _tm = new THREE.Vector3();
+function twistOn(M, u) {
+  if (!M.twist || u <= 0) return;
+  const E = M.meta.eyes; _tf.set((E[0][0] + E[1][0]) / 2, (E[0][1] + E[1][1]) / 2, (E[0][2] + E[1][2]) / 2).applyQuaternion(M.root.quaternion).add(M.root.position);
+  _lq.setFromAxisAngle(_to, M.twist * u); M.root.quaternion.premultiply(_lq);
+  M.root.position.sub(_tf).applyQuaternion(_lq).add(_tf);
+}
 function leapArc(M, P, v, L) {
   P.y += L.h * 4 * v * (1 - v);
   _la.crossVectors(_to, _lu); if (_la.lengthSq() > 1e-6) M.root.quaternion.premultiply(_lq.setFromAxisAngle(_la.normalize(), L.tilt * Math.sin(Math.PI * v) * (1 - v)));
@@ -281,7 +293,7 @@ export function eatStep(M, camera, dt, on) {
   let u = 0, turn = 0, push = 0, jaw = o.uJaw.value, shake = 0;
   let crouch = 0, leapV = -1;
   if (E < T.snap) { const k = ease(E / T.snap); jaw = jaw * (1 - k) + (split ? -0.18 : -0.2) * k; o.uHeadRot.value.multiplyScalar(1 - k); if (s.leap) crouch = s.leap.crouch * k; } // it gathers itself, low
-  else if (E < T.lunge) { const k = (E - T.snap) / (T.lunge - T.snap); u = easeOut(k); turn = easeOut(Math.min(1, k * 1.6)); if (s.leap) { crouch = s.leap.crouch * (1 - Math.min(1, k * 4)); leapV = k; } jaw = -0.2 + (max + 0.2) * easeOut(k * 1.3); o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - k), 0.06 * Math.sin(E * 47)); shake = 0.5; }
+  else if (E < T.lunge) { const k = (E - T.snap) / (T.lunge - T.snap); u = closeIn(k); turn = easeOut(Math.min(1, k * 1.6)); if (s.leap) { crouch = s.leap.crouch * (1 - Math.min(1, k * 4)); leapV = k; } jaw = -0.2 + (max + 0.2) * easeOut(k * 1.3); o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - k), 0.06 * Math.sin(E * 47)); shake = 0.5; }
   else if (E < T.shut) { u = 1; turn = 1; jaw = max + 0.04 * Math.sin(E * 50); o.uHeadRot.value.set(0.03 * Math.sin(E * 41), 0.03 * Math.sin(E * 37), 0.05 * Math.sin(E * 33)); shake = 0.5; }
   else { const k = easeIn((E - T.shut) / (T.black - T.shut)); u = 1; turn = 1; push = 0.04 * k; jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; o.uHeadRot.value.set(0, 0, 0); shake = 0.5; }
   const start = _q.copy(H0).applyQuaternion(s.q0).add(s.p0);
@@ -290,7 +302,9 @@ export function eatStep(M, camera, dt, on) {
   M.root.quaternion.copy(s.q0).slerp(_qt, turn);
   if (leapV >= 0) leapArc(M, P, leapV, s.leap);
   M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
+  twistOn(M, u);
   o.uJaw.value = jaw;
+  o.uHeadRot.value.z += (M.twist ?? 0) * (1 - u); o.uHeadRot.value.y += M.hang ?? 0; // the broken neck (at your face the whole of it is turned, see twistOn)
   const dHead = camera.position.distanceTo(_p.copy(H0).applyQuaternion(M.root.quaternion).add(M.root.position)), dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
   return { fade: 0, shake };

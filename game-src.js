@@ -1642,7 +1642,7 @@ function makeMonster() {
   eyes[2].visible = clue === 7;
   const forms = NL.scare.forms[clue], form = forms[Math.floor(Math.random() * forms.length)];
   c.mon = { clue, eyes, form, M: null }; monster = c;
-  loadMonster(`../monsters/data/${form}.json`, form, U.uTime).then((M) => { c.mon.M = M; scene.add(M.root); }).catch((e) => console.warn('monster', e));
+  loadMonster(`../monsters/data/${form}.json`, form, U.uTime).then((M) => { M.twist = (Math.random() < 0.5 ? -1 : 1) * NL.fight.twist; M.hang = NL.fight.hang; c.mon.M = M; scene.add(M.root); }).catch((e) => console.warn('monster', e));
 }
 const _mr = new THREE.Vector3(), _mu = new THREE.Vector3(0, 1, 0), _mf = new THREE.Vector3();
 function monsterStep() {
@@ -1667,7 +1667,7 @@ function beginScare() {
   if (!M) { hurt(); return; } // not loaded yet (slow connection): it still hurts
   night.scaring = true; ui.sub.classList.remove('show'); subTimer = 0;
   M.own.uLightP.value.copy(lanternLight.position);
-  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d, leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null });
+  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d, travel: NL.fight.leap.forms.includes(M.id) ? undefined : NL.scare.travel, leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null });
 }
 function scareFrame(dt) {
   const M = monster && monster.mon.M;
@@ -1797,6 +1797,7 @@ function fightStep(dt, time) {
     for (const e of c.mon.eyes) e.material.opacity = 1 - smooth(clamp(k * 2, 0, 1));
     M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
+    M.own.uHeadRot.value.z += M.twist * smooth(clamp((k - 0.4) / 0.5, 0, 1)); M.own.uHeadRot.value.y += M.hang * smooth(k); // the neck goes over as it comes through
     if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar); buzz(250); }
   } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
     const G = F.gait, L = F.leap, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
@@ -1823,11 +1824,11 @@ function fightStep(dt, time) {
     fight.lookYaw = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z) - fight.heading;
     const ly = Math.atan2(Math.sin(fight.lookYaw), Math.cos(fight.lookYaw)); // (uHeadRot: x turns the head, y nods it, z tilts it)
     M.own.uHeadRot.value.x = clamp(ly, -0.7, 0.7) + 0.3 * M.own.uHeadRot.value.x + (stumbling ? fight.whip : 0);
-    M.own.uHeadRot.value.y = 0.3 * M.own.uHeadRot.value.y + Math.sin(fight.step * 2) * 0.06 * moving; M.own.uHeadRot.value.z *= 0.3;
+    M.own.uHeadRot.value.y = 0.3 * M.own.uHeadRot.value.y + Math.sin(fight.step * 2) * 0.06 * moving; M.own.uHeadRot.value.z = 0.3 * M.own.uHeadRot.value.z + M.twist + Math.sin(fight.step) * 0.08 * moving; M.own.uHeadRot.value.y += M.hang; // the broken neck lolls with each step
     M.own.uJaw.value += G.gape * (0.6 + 0.4 * Math.sin(fight.step * 2)) * moving;
     if (Math.floor(stepBefore / Math.PI) !== Math.floor(fight.step / Math.PI) && moving) sound.thud(0.16 * low); // its feet
   } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
-    const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k);
+    const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k); M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang;
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
     if (fight.t >= 0.15 + F.stagger) { fight.phase = 'walk'; fight.t = 0; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
