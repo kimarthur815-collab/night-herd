@@ -6,9 +6,9 @@
   "type": "module",
   "scripts": {
     "bake:cows": "node gen-slice.mjs && mkdir -p lantern/cows && cp slice/cows/*.json lantern/cows/",
-    "bake:hand": "node gen-hand.mjs 0.0016",
-    "build:slice": "esbuild slice-src.js --bundle --minify --format=iife --target=es2020 --outfile=slice/slice.js",
-    "build:lantern": "python3 assemble-lantern.py && esbuild lantern-src.js --bundle --minify --format=iife --target=es2020 --outfile=lantern/lantern.js",
+    "bake:hand": "node gen-hand.mjs 0.0016 && cp lantern/hand.json slice/hand.json",
+    "build:slice": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_LEDGER=true --outfile=slice/slice.js",
+    "build:lantern": "esbuild game-src.js --bundle --minify --format=iife --target=es2020 --define:WITH_LEDGER=false --outfile=lantern/lantern.js",
     "build": "npm run build:slice && npm run build:lantern",
     "serve": "python3 -m http.server 8000"
   },
