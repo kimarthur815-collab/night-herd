@@ -93,7 +93,7 @@ function step(g, dt) {
 
 // ---------------- sound ----------------
 // gunshot candidates, to be judged by ear; and the small sounds of cocking and reloading
-let shotKind = 'powderCrack', dropKind = 'dirt';
+let shotKind = 'powderCrack', dropKind = 'rock';
 const snd = (() => {
   let ac = null, nb = null, out = null;
   const irs = {};
@@ -123,11 +123,11 @@ const snd = (() => {
   // the open desert answers back: a soft rumble, and echoes off far rock, each later one weaker
   const ir = (a, kind) => {
     if (irs[kind]) return irs[kind];
-    const long = kind === 'canyon', dur = long ? 3.4 : 1.6, n = Math.floor(a.sampleRate * dur), b = a.createBuffer(2, n, a.sampleRate);
-    const echoes = long ? [[0.33, 0.55], [0.81, 0.38], [1.27, 0.26], [1.93, 0.16], [2.6, 0.09]] : [[0.31, 0.3], [0.72, 0.14]];
+    const long = kind === 'canyon', dry = kind === 'dry', dur = long ? 3.4 : dry ? 0.9 : 1.6, n = Math.floor(a.sampleRate * dur), b = a.createBuffer(2, n, a.sampleRate);
+    const echoes = long ? [[0.33, 0.55], [0.81, 0.38], [1.27, 0.26], [1.93, 0.16], [2.6, 0.09]] : dry ? [] : [[0.31, 0.3], [0.72, 0.14]];
     for (let ch = 0; ch < 2; ch++) {
       const d = b.getChannelData(ch);
-      for (let i = 0; i < n; i++) { const t = i / a.sampleRate; d[i] = (Math.random() * 2 - 1) * 0.05 * Math.exp(-t / (long ? 0.9 : 0.4)) * Math.min(1, t / 0.05); }
+      for (let i = 0; i < n; i++) { const t = i / a.sampleRate; d[i] = (Math.random() * 2 - 1) * 0.05 * Math.exp(-t / (long ? 0.9 : dry ? 0.22 : 0.4)) * Math.min(1, t / 0.05); }
       for (const [t0, g] of echoes) {
         const s0 = Math.floor((t0 + ch * 0.013 + Math.random() * 0.01) * a.sampleRate), w = Math.floor(0.07 * a.sampleRate);
         for (let i = 0; i < w && s0 + i < n; i++) d[s0 + i] += (Math.random() * 2 - 1) * g * Math.exp(-i / (w * 0.3));
@@ -141,11 +141,18 @@ const snd = (() => {
     const g = a.createGain(); g.gain.value = wet; cv.connect(lp).connect(g).connect(out); return cv;
   };
   // the sharp "pak" of ①: a bright, instant burst, kept clear of ②'s overdrive so it stays crisp
-  const crack = (a, t, k) => {
-    const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, 'short', 1600, 0.5));
+  const crack = (a, t, k, room = 'short') => {
+    const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, room, 1600, 0.5));
     burst(a, t, 2600, 'bandpass', 0.8, 0.9 * k, 0.1 + 0.05 * (k - 1), bus);
     burst(a, t, 5200, 'highpass', 0.7, 0.55 * k, 0.05, bus);
     burst(a, t, 2800, 'lowpass', 0.7, 0.35 * k, 0.3, bus);
+  };
+  // the ringing "tang" of the report: narrow bands of noise that ring for a moment
+  const tang = (a, t, k) => {
+    const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, 'dry', 2200, 0.4));
+    burst(a, t, 1250, 'bandpass', 7, 2.2 * k, 0.22, bus);
+    burst(a, t, 2050, 'bandpass', 6, 1.3 * k, 0.15, bus);
+    burst(a, t, 3300, 'bandpass', 5, 0.7 * k, 0.09, bus);
   };
   // a fired case landing: on the packed dirt by the fire (a dull tap and a second, softer one), or on rock (brass rings)
   const tink = (a, t, g) => { for (const [f, d, k] of [[5200, 0.12, 1], [8900, 0.07, 0.6], [12400, 0.05, 0.4]]) ping(a, t, f * (0.98 + Math.random() * 0.04), g * k, d); burst(a, t, 6000, 'highpass', 0.7, g * 0.8, 0.008); };
@@ -164,8 +171,8 @@ const snd = (() => {
       const bus = a.createGain(); bus.connect(out); bus.connect(echo);
       burst(a, t, 2800, 'lowpass', 0.7, 1.0, 0.45, bus); burst(a, t, 6000, 'highpass', 0.7, 0.5, 0.06, bus); thump(a, t, 95, 38, 0.9, 0.3, bus);
     },
-    powder(a, t) { // ② black powder: a deep, pushing boom, a little overdriven, and a short echo
-      const bus = a.createGain(), sh = shaper(a, 2.5); bus.connect(sh).connect(out); sh.connect(tail(a, 'short', 900, 0.9));
+    powder(a, t, room = 'short') { // ② black powder: a deep, pushing boom, a little overdriven, and a short echo
+      const bus = a.createGain(), sh = shaper(a, 2.5); bus.connect(sh).connect(out); sh.connect(tail(a, room, 900, 0.9));
       burst(a, t, 9000, 'highpass', 0.7, 0.7, 0.012, bus); burst(a, t, 1800, 'lowpass', 0.7, 1.0, 0.25, bus);
       burst(a, t, 350, 'lowpass', 0.8, 1.0, 0.7, bus); thump(a, t, 80, 30, 1.0, 0.5, bus);
     },
@@ -173,7 +180,8 @@ const snd = (() => {
       const bus = a.createGain(); bus.connect(out); bus.connect(tail(a, 'canyon', 1400, 1.5));
       burst(a, t, 6000, 'highpass', 0.7, 0.9, 0.02, bus); burst(a, t, 3000, 'lowpass', 0.7, 0.9, 0.18, bus); thump(a, t, 110, 45, 0.7, 0.25, bus);
     },
-    powderCrack(a, t) { SHOTS.powder(a, t); crack(a, t, 1); }, // ⑤ ② with ①'s sharp crack on top
+    powderCrack(a, t) { SHOTS.powder(a, t, 'dry'); crack(a, t, 1, 'dry'); tang(a, t, 1); }, // ⑤ ② with ①'s crack, no echo, a little "tang"
+    powderTang(a, t) { SHOTS.powder(a, t, 'dry'); crack(a, t, 1, 'dry'); tang(a, t, 1.8); }, // ⑦ the same with more "tang"
     powderCrack2(a, t) { SHOTS.powder(a, t); crack(a, t, 1.5); }, // ⑥ the same, the crack louder and a hair longer
     ring(a, t) { // ④ the shot, then the ears ring and everything goes muffled
       const bus = a.createGain(), lp = a.createBiquadFilter(); lp.type = 'lowpass';
