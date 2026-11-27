@@ -18,7 +18,9 @@
     "bake:gunhand": "node gen-gunhand.mjs 0.0016",
     "bake:revolvers": "node --max-old-space-size=6000 gen-revolvers.mjs && npm run copy:revolver",
     "build:revolvers": "esbuild revolvers-src.js --bundle --minify --format=iife --target=es2020 --outfile=revolvers/revolvers.js",
-    "copy:revolver": "mkdir -p lantern/revolver && cp revolvers/data/colt75.json lantern/revolver/"
+    "copy:revolver": "mkdir -p lantern/revolver && cp revolvers/data/colt75.json lantern/revolver/",
+    "bake:monsters": "node gen-monsters.mjs 0.0065",
+    "build:monsters": "esbuild monsters-src.js --bundle --minify --format=iife --target=es2020 --outfile=monsters/monsters.js"
   },
   "dependencies": {
     "three": "^0.187.0"

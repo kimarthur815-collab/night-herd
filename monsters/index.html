@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Night Herd · 괴물 후보</title>
+<style>
+  :root { --ink: #ece4d6; --dim: #a59a8a; --amber: #d39a4e; --panel: rgba(12, 11, 10, 0.92); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; color: var(--ink); overflow: hidden; background: #030303;
+    font: 14px/1.45 system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  header { padding: max(10px, env(safe-area-inset-top)) 10px 6px; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; background: #0a0908; }
+  header::-webkit-scrollbar { display: none; }
+  .chip { flex: none; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.38); color: var(--ink);
+    padding: 8px 13px; border-radius: 999px; font: inherit; font-weight: 650; }
+  .chip.on { background: var(--amber); color: #1b1309; border-color: var(--amber); }
+  #stage { flex: 1; position: relative; min-height: 0; touch-action: none; cursor: grab; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #fade { position: absolute; inset: 0; background: #000; opacity: 0; pointer-events: none; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); pointer-events: none; }
+  #hint { position: absolute; left: 10px; top: 6px; color: var(--dim); font-size: 12px; pointer-events: none; text-shadow: 0 1px 2px #000; }
+  footer { background: var(--panel); border-top: 1px solid rgba(255,255,255,0.08); padding: 8px 12px max(10px, env(safe-area-inset-bottom)); }
+  h1 { font: 700 17px/1.25 Georgia, "Noto Serif KR", serif; margin: 0 0 2px; }
+  .tag { color: var(--amber); font-size: 12.5px; font-weight: 700; margin: 0 0 3px; }
+  ul { margin: 0 0 6px; padding-left: 17px; font-size: 13px; line-height: 1.38; } li { margin: 1px 0; }
+  @media (max-height: 760px) { ul { font-size: 12.5px; } }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .btn { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 10px 14px; background: #2d2925; color: var(--ink); }
+  .btn.red { background: #8e2b1c; }
+  .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
+  .seg button { font: inherit; font-size: 13px; border: 0; padding: 8px 10px; background: transparent; color: var(--dim); }
+  .seg button.on { background: rgba(211,154,78,0.28); color: var(--ink); }
+  .note { color: var(--dim); font-size: 11.5px; margin: 8px 0 0; }
+</style>
+</head>
+<body>
+<div id="app">
+  <header id="mons"></header>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="fade"></div>
+    <div id="loading">불러오는 중…</div>
+    <div id="hint">끌어서 돌아보기 · 두 손가락으로 확대</div>
+  </div>
+  <footer>
+    <p class="tag" id="tag"></p>
+    <h1 id="title"></h1>
+    <ul id="pts"></ul>
+    <div class="row">
+      <button class="btn red" id="pounce">덮치기</button>
+      <button class="btn" id="gape">입 벌리기</button>
+      <span class="seg" id="view"><button data-v="full" class="on">전신</button><button data-v="face">얼굴</button></span>
+      <span class="seg" id="light"><button data-v="ir">적외선 카메라</button><button data-v="lantern">랜턴</button></span>
+    </div>
+    <p class="note">번호가 클수록 더 무서워요. 모양, 크기, 움직임은 모두 제가 정한 임시안이에요. 소리는 아직 없어요.</p>
+  </footer>
+</div>
+<script src="monsters.js"></script>
+</body>
+</html>
