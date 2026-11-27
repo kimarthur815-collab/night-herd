@@ -1371,7 +1371,7 @@ function lampAction() {
 function lampStep(dt) {
   lamp.t += dt;
   if (lamp.mode === 'on') {
-    if (!NIGHT_SCENE) lamp.oil = Math.max(0, lamp.oil - dt / OIL_TIME); // 임시: no oil running out in the night yet
+    if (!NIGHT_SCENE) lamp.oil = Math.max(0, lamp.oil - dt / OIL_TIME); // the night: the oil does not run out (사용자 2026-11-28)
     const oilF = lamp.oil > 0.2 ? 1 : 0.35 + 0.65 * (lamp.oil / 0.2);
     let lv = oilF;
     if (lamp.oil < 0.12 && Math.random() < dt * 3) { lamp.sputter = 1; sound.sputter(); }
