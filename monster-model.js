@@ -28,7 +28,7 @@ const RIG_DECL = `
 attribute vec2 aAtt; attribute vec4 aMat; attribute vec4 aExt; attribute vec4 aRig;
 uniform float uTime;
 uniform vec3 uHeadP, uHeadX, uHeadY, uHeadZ, uJawH, uHeadRot, uNeckP;
-uniform float uJaw, uSplit, uBreath, uSway; uniform vec2 uNeck;
+uniform float uJaw, uSplit, uBreath, uSway, uStride, uStrideAmt, uHip, uZc; uniform vec2 uNeck;
 mat3 aa(vec3 k, float t) { float c = cos(t), s = sin(t), C = 1.0 - c;
   return mat3(c + k.x*k.x*C, k.y*k.x*C + k.z*s, k.z*k.x*C - k.y*s,  k.x*k.y*C - k.z*s, c + k.y*k.y*C, k.z*k.y*C + k.x*s,  k.x*k.z*C + k.y*s, k.y*k.z*C - k.x*s, c + k.z*k.z*C); }`;
 const RIG_MATS = `
@@ -44,6 +44,16 @@ const RIG_POS = `
     transformed += vec3(sin(uTime * 1.3 + position.y * 3.0 + ph), 0.0, cos(uTime * 1.07 + position.y * 2.5 + ph * 0.7)) * 0.035 * aRig.w * aRig.w * uSway; }
   transformed += normal * aExt.y * uBreath;`;
 
+// walking without leg bones: below the hips the body swings forward and back and lifts, the diagonal pairs together
+// (left front with right hind), the head and jaw left out
+const STRIDE = `
+  if (uStrideAmt > 0.0) {
+    float w = clamp((uHip - position.y) / uHip, 0.0, 1.0); w = w * w * (1.0 - aRig.y) * (1.0 - aRig.x);
+    float side = tanh(position.x * 10.0), fore = tanh((position.z - uZc) * 6.0);
+    float ph = uStride + 3.14159 * 0.5 * (1.0 + side * fore);
+    transformed.z += sin(ph) * uStrideAmt * w;
+    transformed.y += max(0.0, cos(ph)) * uStrideAmt * 0.6 * w;
+  }`;
 function monsterMaterial(info, uTime) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 });
   const own = {
@@ -53,6 +63,7 @@ function monsterMaterial(info, uTime) {
     uJaw: { value: 0 }, uSplit: { value: 0 }, uBreath: { value: 0 }, uSway: { value: 1 },
     uSkin: { value: new THREE.Color(...info.skin) }, uWr: { value: new THREE.Vector3(...info.wr).normalize() }, uSmoke: { value: info.smoke ?? 0 },
     uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() }, uAppear: { value: 1 },
+    uStride: { value: 0 }, uStrideAmt: { value: 0 }, uHip: { value: 0.6 }, uZc: { value: 0 },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
@@ -60,7 +71,7 @@ function monsterMaterial(info, uTime) {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>\n${RIG_DECL}\nvarying vec3 vObj; varying vec4 vMat; varying vec4 vExt; varying vec2 vAtt; varying vec3 vWP;`)
       .replace('#include <beginnormal_vertex>', `#include <beginnormal_vertex>\n${RIG_MATS}\nobjectNormal = rN * (rH * (rJ * objectNormal));`)
-      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvObj = position; vMat = aMat; vExt = aExt; vAtt = aAtt;\n${RIG_POS}`)
+      .replace('#include <begin_vertex>', `#include <begin_vertex>\nvObj = position; vMat = aMat; vExt = aExt; vAtt = aAtt;\n${RIG_POS}\n${STRIDE}`)
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
@@ -111,7 +122,7 @@ function monsterMaterial(info, uTime) {
           float shine = min(5.0, uEyeGain * pow(fc, 4.0) / pow(max(dl, 1.3), 1.5)) * uEyeShine;
           totalEmissiveRadiance += vExt.x * vec3(0.96, 1.0, 0.9) * (shine + uEyeSelf * (0.4 + 0.6 * fc)); }`);
   };
-  m.customProgramCacheKey = () => 'game-monster-v2';
+  m.customProgramCacheKey = () => 'game-monster-v3';
   return { mat: m, own };
 }
 function parse(j) {
@@ -147,6 +158,7 @@ export async function loadMonster(url, id, uTime) {
   if (meta.split) { own.uSplit.value = 1; own.uJawH.value.fromArray(meta.headPivot).addScaledVector(own.uHeadZ.value, meta.split.hinge[2]); }
   else own.uJawH.value.fromArray(meta.jawHinge);
   own.uNeckP.value.fromArray(meta.neck ? meta.neck.base : [0, 1.5, -0.05]);
+  own.uHip.value = meta.height * 0.5; own.uZc.value = 0.5 * (meta.bounds[0][2] + meta.bounds[1][2]);
   const root = new THREE.Group(); root.add(mesh); root.visible = false;
   return { id, meta, info, mesh, root, own };
 }

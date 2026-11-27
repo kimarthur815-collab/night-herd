@@ -1781,22 +1781,36 @@ function fightStep(dt, time) {
     M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
     if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar); buzz(250); }
-  } else if (fight.phase === 'walk') { // it comes, fast, straight at you (the shadow only while the light is weak)
-    const still = M.id === 'm5' && lamp.level > F.shadowLight;
-    _fd.copy(camera.position).sub(fight.pos).setY(0); const left = _fd.length() - F.reach; _fd.normalize();
-    const v = still ? 0 : F.walk * crawl;
-    fight.pos.addScaledVector(_fd, Math.min(left, v * dt)); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
-    fight.step += v * dt / F.stride * Math.PI;
-    const low = M.id === 'm3' ? 0.5 : 1;
-    bob = Math.abs(Math.sin(fight.step)) * 0.07 * low * (v > 0 ? 1 : 0); roll = Math.sin(fight.step) * 0.09 * (v > 0 ? 1 : 0); lean = 0.12 * low * (v > 0 ? 1 : 0);
-    if (Math.floor((fight.step - v * dt / F.stride * Math.PI) / Math.PI) !== Math.floor(fight.step / Math.PI) && v > 0) sound.thud(0.12 * low); // its steps
-    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; startEat(M); return; }
+  } else if (fight.phase === 'walk') { // it comes, fast and lurching, straight at you (the shadow only while the light is weak)
+    const G = F.gait, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1;
+    _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(), left = dist - F.reach; _fd.normalize();
+    fight.stumbleIn = (fight.stumbleIn ?? rand(...G.stumble)) - dt;
+    if (fight.stumbleIn < 0) { fight.stumbleIn = rand(...G.stumble); fight.stumbleT = G.stumbleTime; fight.whip = (Math.random() < 0.5 ? -1 : 1) * G.whip; }
+    const stumbling = (fight.stumbleT = Math.max(0, (fight.stumbleT ?? 0) - dt)) > 0;
+    const rush = lerp(G.rush, 1, clamp((dist - F.reach) / 3.5, 0, 1)); // faster the closer it gets
+    const surge = 1 - G.surge + 2 * G.surge * Math.max(0, Math.sin(fight.step)) ** 2; // a lunge on every step
+    const v = still ? 0 : F.walk * crawl * rush * surge * (stumbling ? 0.15 : 1);
+    // it weaves from side to side as it comes, never quite straight
+    _fh.set(_fd.z, 0, -_fd.x).multiplyScalar(Math.cos(fight.step * 0.5) * G.weave * (still ? 0 : 1) * dt * 2.2);
+    fight.pos.addScaledVector(_fd, Math.min(left, v * dt)).add(_fh); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
+    const moving = v > 0.05 ? 1 : 0, stepBefore = fight.step;
+    fight.step += (still ? 0 : Math.max(v, F.walk * 0.6)) * dt / F.stride * Math.PI;
+    bob = Math.abs(Math.sin(fight.step)) * 0.09 * low * moving - (stumbling ? 0.08 : 0);
+    roll = (Math.sin(fight.step) * 0.14 + Math.sin(fight.step * 0.5) * 0.06) * moving + (stumbling ? fight.whip * 0.25 : 0);
+    lean = (0.14 + 0.08 * Math.sin(fight.step * 2)) * low * moving + (stumbling ? 0.25 : 0);
+    M.own.uStride.value = fight.step; M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, G.legs * low * moving, 8, dt);
+    // the head snaps about as it comes, the jaw hanging open
+    M.own.uHeadRot.value.x += Math.sin(fight.step * 2) * 0.12 * moving + (stumbling ? fight.whip : 0);
+    M.own.uHeadRot.value.y += -Math.abs(Math.sin(fight.step)) * 0.1 * moving;
+    M.own.uJaw.value += G.gape * (0.7 + 0.3 * Math.sin(fight.step * 3)) * moving;
+    if (Math.floor(stepBefore / Math.PI) !== Math.floor(fight.step / Math.PI) && moving) sound.thud(0.14 * low); // its steps
+    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0; startEat(M); return; }
   } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
-    const k = clamp(fight.t / 0.15, 0, 1);
+    const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k);
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
     if (fight.t >= 0.15 + F.stagger) { fight.phase = 'walk'; fight.t = 0; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
-    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6;
+    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0;
     if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
   }
   if (fight.phase !== 'eat') placeFight(bob, roll, lean);
