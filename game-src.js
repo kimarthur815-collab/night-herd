@@ -16,6 +16,8 @@ import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, upd
 import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 import { NL, hillH } from './night-layout.js';
+import { loadMonster, startScare, scareStep, MONSTERS } from './monster-model.js';
+import { makeMonsterSound } from './monster-sound.js';
 
 const DEBUG = location.hash === '#debug';
 const GUN = !WALK && !WITH_COUNTING; // the lantern slice and the night: lantern in the left hand, revolver in the right
@@ -500,11 +502,11 @@ const KuwaharaShader = {
 const FinalShader = {
   uniforms: {
     tDiffuse: { value: null }, uRes: { value: new THREE.Vector2(960, 540) }, uCount: { value: 0 }, uExp: { value: 0.26 }, uDesat: { value: 0 },
-    uSeed: { value: 1 }, uFade: { value: 0 },
+    uSeed: { value: 1 }, uFade: { value: 0 }, uHurt: { value: 0 },
   },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
   fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uCount, uExp, uDesat, uSeed, uFade; varying vec2 vUv;
+    uniform sampler2D tDiffuse; uniform vec2 uRes; uniform float uCount, uExp, uDesat, uSeed, uFade, uHurt; varying vec2 vUv;
     vec3 aces(vec3 x){ const float a=2.51,b=0.03,c=2.43,d=0.59,e=0.14; return clamp((x*(a*x+b))/(x*(c*x+d)+e),0.0,1.0); }
     float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx)*0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
     // the counting look: the picture drops to a low, smeared resolution
@@ -527,6 +529,7 @@ const FinalShader = {
       c = mix(c, c*c*(3.0-2.0*c), 0.25 + 0.1*k);
       vec2 q = vUv - 0.5; q.x *= uRes.x / uRes.y;
       c *= mix(1.0, smoothstep(1.15, 0.25, length(q)), 0.35 + 0.2*k + 0.25*uDesat);
+      c *= 1.0 - uHurt * smoothstep(0.3, 0.95, length(q)); // hurt: the edges of sight go dark
       c = pow(c, vec3(1.0/2.2));
       vec2 px = floor(vUv * mix(uRes, uRes*0.5, k));
       float n = hash12(px + uSeed) + hash12(px*1.37 + uSeed*3.1) - 1.0;
@@ -610,6 +613,17 @@ class Sound {
     s.buffer = this.noise; f.type = 'bandpass'; f.frequency.value = rand(1800, 3200); f.Q.value = 0.8;
     g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(rand(0.05, 0.08), t + 0.02); g.gain.exponentialRampToValueAtTime(0.001, t + 0.16);
     s.connect(f).connect(g).connect(this.master); s.start(t, Math.random() * 1.5, 0.2);
+  }
+  heart(g) { // 임시 소리: a muffled double thump (lub-dub)
+    if (!this.ctx || g <= 0) return;
+    const t = this.ctx.currentTime;
+    for (const [dt, k] of [[0, 1], [0.2, 0.7]]) {
+      const o = this.ctx.createOscillator(), gg = this.ctx.createGain(), f = this.ctx.createBiquadFilter();
+      o.type = 'sine'; o.frequency.setValueAtTime(62, t + dt); o.frequency.exponentialRampToValueAtTime(38, t + dt + 0.14);
+      f.type = 'lowpass'; f.frequency.value = 140;
+      gg.gain.setValueAtTime(0.0001, t + dt); gg.gain.exponentialRampToValueAtTime(g * k, t + dt + 0.012); gg.gain.exponentialRampToValueAtTime(0.0001, t + dt + 0.18);
+      o.connect(f).connect(gg).connect(this.master); o.start(t + dt); o.stop(t + dt + 0.2);
+    }
   }
   silenceCrickets() {
     if (!this.ctx) return;
@@ -1028,7 +1042,9 @@ function gunStep(dt, time) {
   const p = vA.copy(GUN_HOLD);
   p.y += 0.02 * gun.aim - 0.012 * (1 - gun.aim) + 0.014 * k; p.z += 0.04 * k;
   p.x -= lagX * 0.45; p.y += lagY * 0.45;
-  p.x += Math.sin(time * 0.31 + 1.0) * 0.0012 + Math.sin(time * 9.7) * Math.sin(time * 5.3) * 0.0005;
+  const gs = NIGHT_SCENE && hp < NL.hp ? lerp(1, NL.hurt.shake[Math.min(hp, NL.hurt.shake.length - 1)], hurtK) : 1; // the gun hand shakes when hurt
+  p.x += Math.sin(time * 0.31 + 1.0) * 0.0012 + Math.sin(time * 9.7) * Math.sin(time * 5.3) * 0.0005 * gs;
+  p.y += Math.sin(time * 11.3 + 0.7) * Math.sin(time * 6.1) * 0.0005 * (gs - 1);
   p.y += Math.sin(time * 0.27 + 2.0) * 0.0012 + Math.sin(time * 1.3) * 0.0008; // breathing
   _ga.set(0, -0.7 * (1 - gun.aim), -GUN_TURN.aimD);
   _gm.lookAt(p, _ga, _gup); gunPivot.quaternion.setFromRotationMatrix(_gm);
@@ -1597,11 +1613,13 @@ function makeMonster() {
   const eyes = [0, 1, 2].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
     sp.scale.setScalar(M.glint); scene.add(sp); return sp; });
   eyes[2].visible = clue === 7;
-  c.mon = { clue, eyes }; monster = c;
+  const forms = NL.scare.forms[clue], form = forms[Math.floor(Math.random() * forms.length)];
+  c.mon = { clue, eyes, form, M: null }; monster = c;
+  loadMonster(`../monsters/data/${form}.json`, form, U.uTime).then((M) => { c.mon.M = M; scene.add(M.root); }).catch((e) => console.warn('monster', e));
 }
 const _mr = new THREE.Vector3(), _mu = new THREE.Vector3(0, 1, 0), _mf = new THREE.Vector3();
 function monsterStep() {
-  if (!monster) return;
+  if (!monster || monster.gone) return;
   const c = monster, m = c.mon, M = NL.monster, u = c.mesh.material.userData.own.uPose.value;
   const yaw = c.mesh.rotation.y + u.x + u.z; _mr.set(Math.cos(yaw), 0, -Math.sin(yaw)); // across the head
   const half = m.clue === 2 ? M.wide : M.eye, up = m.clue === 1 ? M.high : 0;
@@ -1613,18 +1631,54 @@ function monsterStep() {
   const d = c.eyeWorld.distanceTo(lanternLight.position), b = 0.1 * (U.uEyeGain.value / Math.pow(Math.max(d, 1.3), U.uEyeFall.value) + U.uEyeSelf.value);
   for (const e of m.eyes) e.material.color.setScalar(b);
 }
+// ---------------- you walked past it: it comes for you (2단계-2) ----------------
+let hp = NL.hp, msnd = null, heartNext = 0;
+const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch {} };
+function beginScare() {
+  const c = monster, M = c.mon.M;
+  c.gone = true; c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false;
+  if (!M) { hurt(); return; } // not loaded yet (slow connection): it still hurts
+  night.scaring = true; ui.sub.classList.remove('show'); subTimer = 0;
+  M.own.uLightP.value.copy(lanternLight.position);
+  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)));
+}
+function scareFrame(dt) {
+  const M = monster && monster.mon.M;
+  if (!night.scaring || !M) return;
+  M.own.uLightP.value.copy(lanternLight.position);
+  const r = scareStep(M, camera, dt, {
+    roar: () => { if (msnd) { msnd.freeze('none'); msnd.pounce(M.info.roar); } buzz(450); },
+    cut: () => { if (msnd) { msnd.snap(); msnd.cut({ muffle: false }); } buzz(220); hurt(); }, // the roar keeps going at full in the dark
+    back: () => { if (msnd) msnd.restore(); },
+    done: () => { night.scaring = false; night.shake = 0; finalPass.uniforms.uFade.value = 0; if (hp <= 0) night.endT = 0; },
+  });
+  if (r) { finalPass.uniforms.uFade.value = r.fade; night.shake = r.shake; }
+}
+function hurt() { hp = Math.max(0, hp - 1); if (hp <= 0 && !night.scaring) night.endT = 0; }
+// hurt: no bar; the heart, the edges of sight, the shaking hands (more with each lost part)
+let hurtK = 0;
+function hurtFrame(dt) {
+  const H = NL.hurt, i = Math.min(hp, H.bpm.length) , on = hp < NL.hp && hp > 0;
+  hurtK = damp(hurtK, on ? 1 : 0, 1.5, dt);
+  finalPass.uniforms.uHurt.value = on ? H.edge[i] * hurtK : 0;
+  if (!on || !sound.ctx || paused) return;
+  const now = sound.ctx.currentTime;
+  if (now >= heartNext) { heartNext = now + 60 / H.bpm[i]; sound.heart(H.heart[i] * hurtK); }
+}
 function nextStation() {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
   if (night.i === lastStation()) { night.endT = 0; return; } // 임시: going on from the last place ends the night (stage 1)
   night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
+  if (monster && !monster.gone && monster.station === night.i) night.scarePending = true; // you leave it behind: it comes for you
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
 // where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
 function nightMove(dt) {
   let speed = 0;
-  if (night.walking) {
+  if (night.walking && !night.scaring) {
     night.t += dt;
+    if (night.scarePending && night.t >= NL.scare.after) { night.scarePending = false; beginScare(); }
     const k = Math.min(1, night.t / night.dur), nx = lerp(night.x0, night.x1, smooth(k));
     speed = Math.abs(nx - player.pos.x) / Math.max(dt, 1e-3);
     player.pos.x = nx;
@@ -1641,6 +1695,7 @@ function nightMove(dt) {
   camera.position.set(player.pos.x + Math.cos(player.stepPhase) * 0.012 * bobA * cy, EYE_H + dbgEyeUp + Math.abs(Math.sin(player.stepPhase)) * 0.025 * bobA, player.pos.z - Math.cos(player.stepPhase) * 0.012 * bobA * sy);
   followWorld(camera.position.x, camera.position.z);
   camera.rotation.set(player.pitch, player.yaw, 0);
+  if (night.shake > 0) { const k = night.shake * 0.02; camera.position.x += (Math.random() - 0.5) * k; camera.position.y += (Math.random() - 0.5) * k; camera.rotation.z += (Math.random() - 0.5) * k * 2.5; }
   camera.updateMatrixWorld(true);
   camera.getWorldDirection(fwd);
   return speed;
@@ -1652,9 +1707,13 @@ function nightStep(dt) {
   if (night.endT >= 0) {
     night.endT += dt;
     finalPass.uniforms.uFade.value = clamp(night.endT / 2.2, 0, 1);
-    if (night.endT > 2.4 && !ended) { ended = true; ui.end.classList.add('show'); if (document.pointerLockElement) document.exitPointerLock(); }
+    if (night.endT > 2.4 && !ended) {
+      ended = true; if (hp <= 0) { ui.end.querySelector('h1').textContent = NL.lines.deadTitle; ui.end.querySelector('.sub').textContent = NL.lines.dead; }
+      ui.end.classList.add('show'); if (document.pointerLockElement) document.exitPointerLock();
+    }
     return;
   }
+  scareFrame(dt); hurtFrame(dt);
   if (now < night.readyAt || night.walking) return;
   if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
   if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
@@ -1765,7 +1824,8 @@ function holdStep(dt, time, speed, bobA) {
   p.x += Math.cos(player.stepPhase) * 0.009 * bobA; p.y += Math.abs(Math.sin(player.stepPhase)) * 0.012 * bobA - 0.006 * bobA;
   // tremor: a fast physiological shake plus a slow drift, growing while the arm is held up
   const tired = 1 + Math.min(2.2, raisedFor / 3.0);
-  const tr = 0.0007 * tired, dr = 0.0018 * (0.6 + 0.4 * tired);
+  const sk = NIGHT_SCENE && hp < NL.hp ? lerp(1, NL.hurt.shake[Math.min(hp, NL.hurt.shake.length - 1)], hurtK) : 1;
+  const tr = 0.0007 * tired * sk, dr = 0.0018 * (0.6 + 0.4 * tired);
   p.x += Math.sin(time * 9.3) * Math.sin(time * 6.1 + 1.3) * tr + Math.sin(time * 0.37 + 2.1) * dr;
   p.y += Math.sin(time * 10.7 + 0.5) * Math.sin(time * 4.3) * tr + Math.sin(time * 0.29) * dr;
   rz += Math.sin(time * 8.1) * 0.003 * tired;
@@ -2288,6 +2348,7 @@ ui.startBtn.addEventListener('click', () => {
   if (ui.hint) setTimeout(() => ui.hint.classList.add('gone'), 9000);
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
   if (NIGHT_SCENE) {
+    if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); if (monster) msnd.prepare(MONSTERS[monster.mon.form].roar); }
     history.pushState({ nh: 1 }, ''); // so that back pauses instead of leaving
     setTimeout(() => say(NL.lines.open, 3.6), 1200);
     night.readyAt = performance.now() + 4800; night.lastAct = night.readyAt;
@@ -2350,6 +2411,7 @@ if (DEBUG) {
     relight: () => lampAction(),
     night: () => { nightT = 1; },
     // the night scene
+    hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring,
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },

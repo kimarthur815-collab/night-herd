@@ -47,6 +47,11 @@ export const NL = {
     glint: 0.07, // 임시: 괴물 눈빛 하나의 크기 (m)
     anyRow: false, // 임시: 첫날 밤은 쉬우니 괴물은 첫 줄에만 선다 (뒤 줄은 앞 소에 가려 단서가 안 보일 때가 많아요)
   },
+  hp: 3, // 체력 칸 수 (사용자)
+  // 임시: 괴물을 두고 다음 자리로 가면: 걷기 시작하고 이만큼 뒤에 덮친다 (초). 모습: 단서 ④는 ③ 가죽, ⑦은 ④ 머리 갈라짐, ①②는 셋 중 아무거나 (기획서)
+  scare: { after: 0.5, forms: { 1: ['m3', 'm4', 'm5'], 2: ['m3', 'm4', 'm5'], 4: ['m3'], 7: ['m4'] } },
+  // 임시: 다쳤을 때의 신호 (체력 칸이 줄수록 셈): 심장 박동 (분당), 그 크기, 시야 가장자리 어둡기, 손 떨림 배수
+  hurt: { bpm: [0, 112, 80], heart: [0, 0.5, 0.3], edge: [0, 0.75, 0.4], shake: [1, 3, 2] }, // [체력 0칸 전, 1칸, 2칸] — 3칸이면 없음
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")
   endWait: 3.5, // 임시: seconds after the last place is counted before the night fades out (stage 1 ends there)
   lines: { // the cowboy's lines; the brackets are the how-to
@@ -58,6 +63,8 @@ export const NL = {
     match: '성냥을 켜자 (왼쪽을 위로 쓸기)', // 임시: the first time the lantern goes out
     matchPC: '성냥을 켜자 (F)', // 임시
     noMatch: '성냥이 없다.', // 임시
+    deadTitle: '끝', // 임시: 체력이 다 닳았을 때
+    dead: '피가 다 닳았어요', // 임시
   },
   clear: { x0: -9, x1: 22, z0: -40 }, // no saguaros or brush in the camp, the herd and the near side of the rise
   seed: 41, // the herd stands the same way every time
