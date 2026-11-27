@@ -1,8 +1,9 @@
 // monster-sound.js — the monsters' sounds, synthesized with Web Audio (no recordings).
 // I can't hear these: every sound here is a candidate for the ear to judge.
 // Breathing and growls run while a monster is on screen; the pounce, the bite and the dark are one-shots.
-export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 우르렁', machine: '② 기계음 섞인 포효', deep: '③ 묵직한 포효', gargle: '④ 끓는 목 그르렁 포효' };
-export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' };
+export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 날카로운 포효', machine: '② 기계음 섞인 포효', crack: '③ 갈라지는 포효', gargle: '④ 끓는 목 고음 포효' };
+export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' }; // ③ chosen
+export const SCARE_KINDS = { shake: '① 얼굴이 확 튀어나와 마구 흔들림', fast: '② 멀리서 순식간에', side: '③ 화면 옆에서 갑자기' };
 
 export function makeMonsterSound(opt = {}) {
   let a = opt.context || null, out, bus, muffle, verbIn, noiseBuf, loop = null, enabled = true;
@@ -149,26 +150,28 @@ export function makeMonsterSound(opt = {}) {
     const chest = a.createBiquadFilter(); chest.type = 'lowpass'; chest.frequency.value = o.chestHz ?? 260; const cg = a.createGain(); cg.gain.value = o.chest ?? 0.9;
     drive.connect(chest).connect(cg).connect(sum);
     const top = a.createBiquadFilter(); top.type = 'lowpass'; top.frequency.value = o.top ?? 5200;
+    let tail = sum.connect(top);
+    if (o.hp) { const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = o.hp; hp.Q.value = 0.7; tail = tail.connect(hp); }
     const g = a.createGain();
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain, t + (o.att ?? 0.03));
     if (o.swell) g.gain.exponentialRampToValueAtTime(o.gain * o.swell, t + dur * 0.35);
     g.gain.setValueAtTime(o.gain * (o.swell ?? 1), t + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, end);
-    sum.connect(top).connect(g); g.connect(out); g.connect(verbIn);
+    tail.connect(g); g.connect(out); g.connect(verbIn);
     for (const s of oscs) { s.start(t); s.stop(end + 0.05); }
     ns.start(t, Math.random()); ns.stop(end + 0.05);
     return g;
   }
   // a low growl rising under the quiet before it comes (the "그르렁")
   function growl(t, dur, gain) {
-    voice(t, { dur, f: [[0, 96], [dur, 112]], gain, rattle: 0.85, rattleHz: 22, rattleHz1: 30, drive: 3, breath: 0.35, breathHz: 900, formants: [[540, 5, 0.8], [980, 6, 0.45]], chest: 0.8, chestHz: 320, top: 2800, att: dur * 0.8, jit: 0.04 });
+    voice(t, { dur, f: [[0, 120], [dur, 140]], gain, rattle: 0.85, rattleHz: 22, rattleHz1: 30, drive: 4, breath: 0.45, breathHz: 1800, formants: [[800, 4, 0.8], [1600, 5, 0.6]], chest: 0.4, chestHz: 320, top: 4500, hp: 200, att: dur * 0.8, jit: 0.04 });
   }
   // animatronic: a metal clank as the jaw slams open, a buzzing electric edge, a rattle like loose parts
   function machine(t) {
     for (const [hz, g, d] of [[410, 0.35, 0.5], [1132, 0.22, 0.35], [2214, 0.16, 0.25], [3660, 0.1, 0.18]]) tone(t, d, { f0: hz, gain: g, att: 0.002 });
     noise(t, 0.05, { type: 'highpass', f0: 2500, q: 0.7, gain: 0.5, att: 0.001 });
-    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(180, t); bz.frequency.exponentialRampToValueAtTime(130, t + 1.2);
+    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(300, t); bz.frequency.exponentialRampToValueAtTime(220, t + 1.1);
     const ring = a.createGain(); ring.gain.value = 0; const rm = a.createOscillator(); rm.frequency.value = 730; rm.connect(ring.gain);
-    const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 1700; bf.Q.value = 1.2;
+    const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 2700; bf.Q.value = 1.2;
     const bg = a.createGain(); env(bg, t, 0.02, 1.25, 0.22); const sh = crush(5);
     bz.connect(ring).connect(sh).connect(bf).connect(bg).connect(out);
     bz.start(t); rm.start(t); bz.stop(t + 1.3); rm.stop(t + 1.3);
@@ -186,11 +189,23 @@ export function makeMonsterSound(opt = {}) {
   function pounce(kind) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
-    if (kind === 'growlRoar') voice(t, { dur: 1.25, f: [[0, 205], [0.12, 290], [0.5, 210], [1.25, 128]], gain: 0.55, rattle: 0.55, rattleHz: 34, rattleHz1: 25, drive: 7, breath: 0.6, breathHz: 1500, formants: [[760, 4, 1], [1350, 5, 0.85], [3000, 6, 0.35]], formantSweep: 0.8, chestHz: 380, chest: 0.6, top: 7000, att: 0.025 });
-    if (kind === 'machine') { voice(t + 0.02, { dur: 1.2, f: [[0, 245], [0.1, 330], [1.2, 165]], gain: 0.55, rattle: 0.7, rattleHz: 40, drive: 10, breath: 0.4, breathHz: 1700, fifth: 0.18, formants: [[860, 4, 1], [1650, 5, 0.9], [3300, 7, 0.5]], chestHz: 420, chest: 0.5, top: 8000, att: 0.015 }); machine(t); }
-    if (kind === 'deep') voice(t, { dur: 1.6, f: [[0, 125], [0.15, 168], [0.7, 130], [1.6, 84]], gain: 0.3, rattle: 0.4, rattleHz: 26, rattleHz1: 17, drive: 5, breath: 0.45, breathHz: 1000, sub: 0.7, subType: 'triangle', formants: [[540, 4, 1], [980, 5, 0.75], [2400, 6, 0.25]], chest: 1.1, chestHz: 280, top: 4800, att: 0.04, swell: 1.15 });
-    if (kind === 'gargle') voice(t, { dur: 1.4, f: [[0, 180], [0.2, 245], [1.4, 118]], gain: 0.55, rattle: 0.95, rattleHz: 19, rattleHz1: 35, drive: 8, breath: 0.9, breathHz: 1400, jit: 0.12, jitRate: 7, formants: [[650, 3, 1], [1200, 4, 0.8], [2700, 5, 0.45]], formantSweep: 1.2, chestHz: 340, chest: 0.6, top: 7000, att: 0.03 });
-    noise(t, 0.35, { type: 'lowpass', f0: 220, f1: 60, q: 0.8, gain: 0.45, att: 0.008 }); // the rush of air as it comes
+    // tuned against the reference clip: most of the energy at 1-6 kHz, little below 400 Hz
+    const bright = { breathHz: 2900, chest: 0.12, chestHz: 300, top: 7800, hp: 620 };
+    tone(t, 0.16, { f0: 95, f1: 48, gain: 0.35, att: 0.003 }); // a thump of weight behind it
+    if (kind === 'growlRoar') voice(t, { ...bright, dur: 1.1, f: [[0, 205], [0.1, 280], [0.45, 215], [1.1, 150]], gain: 0.7, rattle: 0.5, rattleHz: 33, rattleHz1: 24, drive: 9, breath: 0.85, formants: [[1250, 3, 1], [2550, 4, 1], [3750, 5, 0.65]], formantSweep: 0.85, att: 0.02 });
+    if (kind === 'machine') { voice(t + 0.02, { ...bright, dur: 1.05, f: [[0, 245], [0.08, 330], [1.05, 175]], gain: 0.7, rattle: 0.7, rattleHz: 42, drive: 12, breath: 0.7, breathHz: 3300, fifth: 0.25, formants: [[1500, 3, 1], [2900, 4, 1], [4300, 6, 0.6]], hp: 680, att: 0.012 }); machine(t); }
+    if (kind === 'crack') voice(t, { ...bright, dur: 1.1, f: [[0, 210], [0.07, 340], [0.2, 235], [0.42, 310], [0.6, 220], [1.1, 160]], gain: 0.7, rattle: 0.6, rattleHz: 27, rattleHz1: 14, drive: 10, breath: 0.8, jit: 0.16, jitRate: 9, formants: [[1150, 3, 1], [2350, 4, 0.95], [3550, 5, 0.65]], att: 0.015 });
+    if (kind === 'gargle') voice(t, { ...bright, dur: 1.2, f: [[0, 190], [0.18, 262], [1.2, 135]], gain: 0.75, rattle: 0.95, rattleHz: 20, rattleHz1: 36, drive: 9, breath: 1.0, breathHz: 3000, jit: 0.12, jitRate: 7, formants: [[1050, 3, 1], [2250, 4, 1], [3450, 5, 0.7]], formantSweep: 1.1, hp: 580, att: 0.025 });
+    noise(t, 0.25, { f0: 1800, f1: 600, q: 0.8, gain: 0.3, att: 0.006 }); // the rush of air as it comes
+  }
+  function cut() {
+    if (!ready()) return;
+    const t = a.currentTime + 0.005;
+    muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(900, t); muffle.frequency.exponentialRampToValueAtTime(500, t + 1.2);
+    // the ringing goes around the muffle, straight out
+    const o = a.createOscillator(); o.frequency.value = 3400; const g = a.createGain(); env(g, t, 0.01, 1.8, 0.06);
+    o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1.9);
+    tone(t + 0.35, 0.13, { f0: 62, f1: 42, gain: 0.45, att: 0.005 }); tone(t + 0.52, 0.15, { f0: 56, f1: 38, gain: 0.32, att: 0.005 });
   }
   function preview(kind) { if (ready()) { freeze(kind); setTimeout(() => { pounce(kind); setTimeout(restore, 1800); }, kind === 'growlRoar' ? 520 : 60); } }
   function previewBite(kind) { if (ready()) { bite(kind); setTimeout(restore, 2600); } }
@@ -237,6 +252,6 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, stop: () => a && stopLoop(),
+    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, stop: () => a && stopLoop(),
   };
 }

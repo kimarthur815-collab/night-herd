@@ -7,7 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { makeMonsterSound, POUNCE_KINDS, BITE_KINDS } from './monster-sound.js';
+import { makeMonsterSound, POUNCE_KINDS, SCARE_KINDS } from './monster-sound.js';
 
 const INFO = {
   m3: {
@@ -242,12 +242,13 @@ async function loadMonster(id) {
 }
 
 // ---------------- motion: breathing, a gaping jaw, twitches, and the pounce ----------------
-function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), eat: -1, fired: {}, camK: 0, shake: 0, breathPh: 0 }; }
+function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), eat: -1, scare: -1, fired: {}, camK: 0, shake: 0, breathPh: 0 }; }
 const rr = (a, b) => a + Math.random() * (b - a);
 const _fz = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const snd = makeMonsterSound();
-let pounceKind = 'growlRoar', biteKind = 'crunch';
+let pounceKind = 'growlRoar', scareKind = 'shake';
+const biteKind = 'gulp'; // chosen: ③ 꿀꺽 삼킴
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
 // the pounce, in seconds from the tap: it goes still and quiet, snaps round with a roar and lunges,
 // you are pulled into the open mouth, the jaws shut over the screen, the light through the teeth dies, black, and back
@@ -264,7 +265,7 @@ function animate(M, dt) {
   o.uBreath.value = A.breath * 0.012 * Math.sin(t * Math.PI * 2 * hz) * (eating && E < EAT.snap ? 0.2 : 1);
   // the jaw: a slow working open and shut, a quiver, and now and then a long gape
   s.gapeT -= dt;
-  if (s.gapeT < 0 && !eating) { s.gape = 1; s.gapeT = rr(3.5, 7); s.gapeHold = rr(0.8, 1.6); snd.gape(M.id); }
+  if (s.gapeT < 0 && !eating && s.scare < 0) { s.gape = 1; s.gapeT = rr(3.5, 7); s.gapeHold = rr(0.8, 1.6); snd.gape(M.id); }
   if (s.gape > 0) { s.gapeHold -= dt; if (s.gapeHold < 0) s.gape = Math.max(0, s.gape - dt * 1.4); }
   s.gapeV = (s.gapeV ?? 0) + ((s.gape > 0 && s.gapeHold > 0 ? 1 : s.gape) - (s.gapeV ?? 0)) * Math.min(1, dt * 5);
   let jaw = (split ? -0.1 : -0.12) + 0.08 * Math.sin(t * 0.9) + 0.012 * Math.sin(t * 37) + s.gapeV * A.jaw;
@@ -322,12 +323,52 @@ function animate(M, dt) {
     const P = _p.copy(H0).addScaledVector(to, along);
     M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
   }
+  if (s.scare >= 0) { const r = scareStep(M, dt); if (r) { jaw = r.jaw; fade = r.fade; } }
   o.uJaw.value = jaw;
-  const dim = (1 - s.camK) * (1 - s.camK);
+  const dim = (1 - s.camK) * (1 - s.camK) * (s.scare >= 0 ? 0.3 : 1); // close up, the eyes must not wash out the face
   o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
   grade.uniforms.uBite.value = bite; grade.uniforms.uLeak.value = leak; grade.uniforms.uBiteH.value = split ? 1 : 0;
   $('fade').style.opacity = fade;
-  snd.ambient(M.id, dt, { cross: s.breathCross && !eating });
+  snd.ambient(M.id, dt, { cross: s.breathCross && !eating && s.scare < 0 });
+}
+// ---------------- the jumpscare for a monster you missed: no wind-up, its face is just there ----------------
+// ① the face snaps in out of the dark and thrashes, ② it crosses the whole distance in an instant,
+// ③ it comes in from the edge of the screen. Then a hard cut to black, ears ringing, and back.
+const SCARE = { shake: { appear: 0.12, travel: 0.0, d: 0.6 }, fast: { appear: 0.0, travel: 0.11, d: 0.68 }, side: { appear: 0.0, travel: 0.16, d: 0.64 } };
+const _fwd = new THREE.Vector3(), _rgt = new THREE.Vector3(), _tgt = new THREE.Vector3(), _st = new THREE.Vector3(), _qt = new THREE.Quaternion(), _qs = new THREE.Quaternion();
+function scareStep(M, dt) {
+  const s = M.st, o = M.own, split = !!M.meta.split, k = s.scareKind, C = SCARE[k];
+  s.scare += dt;
+  const E = s.scare, hit = C.appear + C.travel, cutT = hit + 0.8, back0 = cutT + 0.75, back1 = back0 + 0.8;
+  const once = (key, f) => { if (!s.fired[key]) { s.fired[key] = 1; f(); } };
+  if (E >= C.appear) once('roar', () => { snd.freeze('none'); snd.pounce(pounceKind); buzz(450); });
+  if (E >= cutT) once('cut', () => { snd.cut(); buzz(0); });
+  if (E >= back0) once('back', () => snd.restore());
+  if (E >= back1) { s.scare = -1; s.fired = {}; M.root.position.set(0, 0, 0); M.root.quaternion.identity(); return { jaw: -0.12, fade: 0 }; }
+  if (E < C.appear) return { jaw: -0.12, fade: 1 };                   // ① a beat of darkness first
+  if (E >= cutT) return { jaw: -0.12, fade: E < back0 ? 1 : 1 - ease((E - back0) / (back1 - back0)) }; // hard cut, then back
+  // where its face ends up: right in front of you, mouth open at you
+  camera.getWorldDirection(_fwd); _rgt.crossVectors(_fwd, camera.up).normalize();
+  const H0 = _h0.fromArray(M.meta.headPivot), max = split ? 0.6 : 0.95;
+  // the face (not the skull's middle) stops a hand's breadth from you: long muzzles stop further out
+  _tgt.copy(camera.position).addScaledVector(_fwd, C.d + 0.75 * M.meta.headL - 0.28).addScaledVector(camera.up, 0.03);
+  const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
+  _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
+  _qt.setFromUnitVectors(_fz, _to.copy(camera.position).sub(_tgt).normalize());
+  let u = C.travel > 0 ? easeOut((E - C.appear) / C.travel) : 1;
+  if (k === 'fast') { _st.copy(H0); _qs.identity(); }                  // from where it stood
+  else if (k === 'side') { _st.copy(camera.position).addScaledVector(_fwd, 1.0).addScaledVector(_rgt, -1.7 * (s.scareSide || 1)).addScaledVector(camera.up, -0.35); _qs.copy(_qt).multiply(_qa.setFromAxisAngle(_fz, 0.7 * (s.scareSide || 1))); }
+  else { _st.copy(_tgt); _qs.copy(_qt); }
+  const P = _p.copy(_st).lerp(_tgt, u);
+  M.root.quaternion.copy(_qs).slerp(_qt, u);
+  // thrashing: the head whips about, the whole thing judders
+  const sh = k === 'shake' ? 1 : 0.45, ph = E * 60;
+  if (u >= 1) { P.x += (Math.random() - 0.5) * 0.05 * sh; P.y += (Math.random() - 0.5) * 0.05 * sh; }
+  M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
+  if (u >= 1) o.uHeadRot.value.set((Math.random() - 0.5) * 0.7 * sh, (Math.random() - 0.5) * 0.4 * sh, (Math.random() - 0.5) * 0.9 * sh);
+  else o.uHeadRot.value.set(0, 0, 0);
+  s.shake = u >= 1 ? 1.4 * sh + 0.3 : 0.6;
+  return { jaw: max * (u >= 1 ? 0.85 + 0.15 * Math.sin(ph * 0.55) : u), fade: 0 };
 }
 // where the throat is, in the world, for the moment you are inside the mouth
 const _m = new THREE.Vector3(), _a = new THREE.Vector3(), _hy = new THREE.Vector3(), _mat = new THREE.Matrix4(), _qm = new THREE.Quaternion();
@@ -486,13 +527,15 @@ $('mons').innerHTML = ORDER.map((id) => `<button class="chip" data-v="${id}">${I
 $('mons').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setMonster(b.dataset.v); });
 $('light').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setLight(b.dataset.v); });
 $('view').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setView(b.dataset.v); });
-$('pounce').addEventListener('click', () => { snd.unlock(); if (!cur || cur.st.eat >= 0) return; cur.st.eat = 0; cur.st.fired = {}; });
-$('gape').addEventListener('click', () => { snd.unlock(); if (cur && cur.st.eat < 0) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); snd.gape(cur.id); } });
+const busy = () => !cur || cur.st.eat >= 0 || cur.st.scare >= 0;
+$('pounce').addEventListener('click', () => { snd.unlock(); if (busy()) return; cur.st.eat = 0; cur.st.fired = {}; });
+$('scare').addEventListener('click', () => { snd.unlock(); if (busy()) return; cur.st.scare = 0; cur.st.fired = {}; cur.st.scareKind = scareKind; cur.st.scareSide = Math.random() < 0.5 ? 1 : -1; });
+$('gape').addEventListener('click', () => { snd.unlock(); if (!busy()) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); snd.gape(cur.id); } });
 $('sound').addEventListener('click', () => { snd.setEnabled(!snd.enabled); snd.unlock(); $('sound').textContent = snd.enabled ? '소리 켜짐' : '소리 꺼짐'; $('sound').classList.toggle('on', snd.enabled); });
 $('pounceSel').innerHTML = Object.entries(POUNCE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-$('biteSel').innerHTML = Object.entries(BITE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+$('scareSel').innerHTML = Object.entries(SCARE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('pounceSel').addEventListener('change', (e) => { pounceKind = e.target.value; if (!cur || cur.st.eat < 0) snd.preview(pounceKind); }); // pick one, hear it
-$('biteSel').addEventListener('change', (e) => { biteKind = e.target.value; if (!cur || cur.st.eat < 0) snd.previewBite(biteKind); });
+$('scareSel').addEventListener('change', (e) => { scareKind = e.target.value; });
 window.addEventListener('pointerdown', () => snd.unlock(), { capture: true });
 
 function resize() {
@@ -519,6 +562,6 @@ setMonster(new URLSearchParams(location.search).get('m') || 'm3').then(() => req
 // for tests: freeze the clock, jump the motion, pick a moment of the pounce
 window.__mon = {
   setSpeed(s) { speed = s; }, get cur() { return cur; }, setMonster, setLight, setView,
-  setPounce(k) { pounceKind = k; }, setBite(k) { biteKind = k; }, snd,
+  setPounce(k) { pounceKind = k; }, setScare(k) { scareKind = k; }, snd,
   pose(o) { if (!cur) return; Object.assign(cur.st, o.st || {}); if (o.yaw !== undefined) view.yaw = o.yaw; if (o.pitch !== undefined) view.pitch = o.pitch; if (o.zoom !== undefined) view.zoom = o.zoom; },
 };
