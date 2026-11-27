@@ -36,7 +36,8 @@ export const NL = {
   matches: 1, // 성냥: 랜턴이 꺼지면 한 번 다시 켤 수 있다 (사용자). 채우는 곳은 마을 상점 (아직 없음)
   // 임시: phone gestures: a swipe counts after this share of the screen's short side, and when it goes this many times more one
   // way than the other; a tap that misses every cow takes the nearest one within this share of the short side
-  swipe: { far: 0.08, ratio: 1.2, reach: 0.07 },
+  // cock: on the right half, a swipe counts as down (or up) if it goes at least this many times as far down as sideways (a thumb comes down in an arc)
+  swipe: { far: 0.08, ratio: 1.2, reach: 0.07, cock: 0.75, still: 10 },
   // the one too many: a thing that is not a cow, standing among them in one of the places above (anywhere, front row or up the rise)
   monster: {
     clues: [1, 2, 4, 7], // 기획서: 첫날 밤은 ①②④⑦ 중 하나 (이 단계에서는 한 밤에 하나를 골라요). 시험용: 주소 끝에 ?clue=4
@@ -62,7 +63,7 @@ export const NL = {
     wake: 2.5, // 먹힌 뒤 암전에서 아침 화면까지 (초)
   },
   // 임시: 폰에서 총을 꾹 누르는 곳(화면 오른쪽 아래, 비율)과 누르고 있는 시간(초), 쏜 곳을 총이 가리키고 있는 시간(초)
-  gun: { area: [0.62, 0.5], hold: 0.55, point: 0.9 },
+  gun: { area: [0.62, 0.5], hold: 0.8, point: 0.9 },
   // 임시: 괴물을 두고 다음 자리로 가면: 걷기 시작하고 이만큼 뒤에 덮친다 (초). 모습: 단서 ④는 ③ 가죽, ⑦은 ④ 머리 갈라짐, ①②는 셋 중 아무거나 (기획서)
   scare: { after: 0.5, forms: { 1: ['m3', 'm4', 'm5'], 2: ['m3', 'm4', 'm5'], 4: ['m3'], 7: ['m4'] } },
   // 임시: 다쳤을 때의 신호 (체력 칸이 줄수록 셈): 심장 박동 (분당), 그 크기, 시야 가장자리 어둡기, 손 떨림 배수

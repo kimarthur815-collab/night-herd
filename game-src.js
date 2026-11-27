@@ -1024,7 +1024,7 @@ async function loadGunHand() {
 }
 function cockGun() { if (started && GUN && rev && cockRevolver(rev, gunOn)) gun.t = 0; }
 function fireGun() { if (started && GUN && rev && rev.state.cocked && fireRevolver(rev, gunOn)) gun.t = 0; } // only once the hammer is back
-function reloadGun() { if (started && GUN && rev && reloadRevolver(rev, gunOn)) gun.t = 0; }
+function reloadGun() { if (started && GUN && rev && reloadRevolver(rev, gunOn)) { gun.t = 0; return true; } return false; }
 const kickAt = (t) => (t < 0.025 ? t / 0.025 : Math.exp(-(t - 0.025) / 0.11) * (1 + 0.15 * Math.sin((t - 0.025) * 30) * Math.exp(-(t - 0.025) / 0.05)));
 function gunStep(dt, time) {
   if (!rev) return;
@@ -1890,7 +1890,7 @@ function gestureDown(e) {
   const g = { x: e.clientX, y: e.clientY, t: performance.now() }; gest.set(e.pointerId, g);
   try { canvas.setPointerCapture(e.pointerId); } catch {}
   // a long press on the gun (lower right) reloads
-  if (g.x > innerWidth * NL.gun.area[0] && g.y > innerHeight * NL.gun.area[1]) g.timer = setTimeout(() => { if (!g.done && !g.moved && started && !paused && !ended) { g.done = true; reloadGun(); night.lastAct = performance.now(); } }, NL.gun.hold * 1000);
+  if (g.x > innerWidth * NL.gun.area[0] && g.y > innerHeight * NL.gun.area[1]) g.timer = setTimeout(() => { if (!g.done && !g.moved && started && !paused && !ended && reloadGun()) { g.done = true; night.lastAct = performance.now(); } }, NL.gun.hold * 1000); // nothing to load: the touch stays free for a swipe
 }
 function gestureUp(e) {
   const g = gest.get(e.pointerId); gest.delete(e.pointerId);
@@ -1908,19 +1908,22 @@ function gestureUp(e) {
 function gestureMove(e) {
   const g = gest.get(e.pointerId);
   if (!g || g.done || !started || paused || ended) return;
-  if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > 18) { g.moved = true; clearTimeout(g.timer); }
+  if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > NL.swipe.still) { g.moved = true; clearTimeout(g.timer); } // moving: not a long press
   gestureSwipe(g, e.clientX - g.x, e.clientY - g.y);
 }
 function gestureSwipe(g, dx, dy) {
   const W = innerWidth, far = Math.min(W, innerHeight) * NL.swipe.far;
+  // the right half, down or up even at a slant (a thumb comes down in an arc): the hammer
+  if (g.x >= W * 0.5 && Math.abs(dy) > far && Math.abs(dy) >= NL.swipe.cock * Math.abs(dx)) {
+    g.done = true; clearTimeout(g.timer); night.lastAct = performance.now();
+    if (dy > 0) nightCock(); else decockGun();
+    return;
+  }
   if (Math.abs(dx) > far && Math.abs(dx) > NL.swipe.ratio * Math.abs(dy)) { g.done = true; nextStation(); return; } // either way: there is no going back
   if (Math.abs(dy) > far && Math.abs(dy) > NL.swipe.ratio * Math.abs(dx) && g.x < W * 0.5) {
     g.done = true; night.lastAct = performance.now();
     if (dy < 0) { if (lamp.mode === 'off') lampAction(); else if (lamp.mode === 'on') raiseTouch = true; } // up: light it, or hold it up
     else if (raiseTouch) raiseTouch = false; else if (lamp.mode === 'on') lampAction(); // down: lower it, or put it out
-  } else if (Math.abs(dy) > far && Math.abs(dy) > NL.swipe.ratio * Math.abs(dx)) { // the right side: the hammer
-    g.done = true; night.lastAct = performance.now();
-    if (dy > 0) nightCock(); else decockGun();
   }
 }
 
