@@ -1179,9 +1179,10 @@ function cowStep(c, dt, time) {
   if (c.staring) {
     const [y, p] = lookAngles(c, camera.position);
     ai.yaw = damp(ai.yaw, y, 7, dt); ai.pitch = damp(ai.pitch, p, 7, dt);
-  } else if (c.alarm > 0.05) { // uneasy: head up, one eye on you
+  } else if (c.alarm > 0.05) { // uneasy: head up; it looks where it's turning, otherwise keeps an eye on you
     const [y] = lookAngles(c, camera.position);
-    ai.yaw = damp(ai.yaw, clamp(y, -0.6, 0.6), 3, dt); ai.pitch = damp(ai.pitch, -0.08, 3, dt);
+    const lead = c.turnLead || 0;
+    ai.yaw = damp(ai.yaw, Math.abs(lead) > 0.15 ? lead : clamp(y, -0.6, 0.6), 3, dt); ai.pitch = damp(ai.pitch, -0.08, 3, dt);
     ai.t = Math.min(ai.t, 1.5);
   } else {
     ai.t -= dt;
@@ -1631,16 +1632,30 @@ function herdStep(dt) {
       const ex = p.x - sx, ez = p.z - sz, e = Math.hypot(ex, ez);
       if (e < 1.8 && e > 1e-3) { const k = ((1.8 - e) / 1.8) * 1.2; vx += (ex / e) * k; vz += (ez / e) * k; }
     }
-    const want = Math.hypot(vx, vz);
-    if (want > 0.15) {
-      let dh = Math.atan2(vx, vz) - c.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh));
-      c.heading += clamp(dh, -1.3 * dt, 1.3 * dt); // a cow turns, it doesn't slide sideways
-      c.speed = damp(c.speed, Math.min(WALK_MAX, want) * (0.3 + 0.7 * Math.max(0, Math.cos(dh))), 2.0, dt);
-    } else c.speed = damp(c.speed, 0, 1.5, dt);
-    p.x += Math.sin(c.heading) * c.speed * dt; p.z += Math.cos(c.heading) * c.speed * dt;
+    // smooth what it wants, so it doesn't twitch each time you move
+    c.wx = damp(c.wx, vx, 2.5, dt); c.wz = damp(c.wz, vz, 2.5, dt);
+    const want = Math.hypot(c.wx, c.wz);
+    let dh = 0;
+    if (want > 0.15) { dh = Math.atan2(c.wx, c.wz) - c.heading; dh = Math.atan2(Math.sin(dh), Math.cos(dh)); }
+    // a cow turns in an arc as it walks; standing, it only swings round slowly,
+    // stepping its front end around its hindquarters, and its head leads the way
+    const maxTurn = 0.3 + c.speed / 2.2; // rad/s: a turning circle of about 1.5 m at a brisk walk
+    c.turnVel = damp(c.turnVel, want > 0.15 ? clamp(dh * 1.8, -maxTurn, maxTurn) : 0, 3.0, dt);
+    const piv = 0.45 * c.s, sh0 = Math.sin(c.heading), ch0 = Math.cos(c.heading);
+    const pvx = p.x - sh0 * piv, pvz = p.z - ch0 * piv; // the pivot, near the hips
+    c.heading += c.turnVel * dt;
+    const sh1 = Math.sin(c.heading), ch1 = Math.cos(c.heading);
+    p.x = pvx + sh1 * piv; p.z = pvz + ch1 * piv;
+    // it only walks off properly once it is facing roughly the right way
+    const goal = want > 0.15 ? Math.min(WALK_MAX, want) * (0.2 + 0.8 * Math.max(0, Math.cos(dh))) : 0;
+    c.speed = damp(c.speed, goal, 1.6, dt);
+    p.x += sh1 * c.speed * dt; p.z += ch1 * c.speed * dt;
     c.mesh.rotation.y = c.heading;
-    c.gait = damp(c.gait, clamp(c.speed / 0.9, 0, 1), 4, dt);
-    c.gaitPhase += (c.speed * dt) / STRIDE;
+    c.turnLead = clamp(dh, -0.6, 0.6) * Math.min(1, want);
+    // the legs keep stepping while it turns, not only while it walks forward
+    const stepRate = c.speed + Math.abs(c.turnVel) * 0.55;
+    c.gait = damp(c.gait, clamp(stepRate / 0.9, 0, 1), 4, dt);
+    c.gaitPhase += (stepRate * dt) / STRIDE;
     p.y = -0.012 * c.gait * (0.5 - 0.5 * Math.cos(c.gaitPhase * Math.PI * 4)); // the back dips twice a stride
     c.mesh.material.userData.own.uGait.value.set(c.gaitPhase, c.gait, 0, 0);
     c.mesh.updateMatrixWorld();
@@ -1704,7 +1719,7 @@ function frameWalk(now) {
       cows.push({
         mesh, s: h.s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(),
         aimPoints: [new THREE.Vector3(0, 1.0, 0.0), new THREE.Vector3(0, 1.0, 0.6), new THREE.Vector3(0, 1.0, -0.6), new THREE.Vector3(0, 1.15, 1.1)],
-        heading: mesh.rotation.y, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0,
+        heading: mesh.rotation.y, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
         ai: { t: rand(0, 3), yaw: rand(-0.4, 0.4), pitch: rand(-0.9, 0.0), tYaw: 0, tPitch: -0.5, flick: 0 },
       });
     });
@@ -1770,7 +1785,7 @@ if (DEBUG) {
     state: () => ({ mode: lamp.mode, level: lamp.level, oil: lamp.oil, nightT, raiseT, count, countT, revealT, ended, sub: ui.sub.textContent, pos: player.pos.toArray() }),
     countAll: () => { countReadyAt = 0; for (const c of cows) c.lit = 2; },
     setCount: (n) => { count = n; },
-    herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2)]),
+    herd: () => cows.map((c) => [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2), +c.speed.toFixed(2), +c.gait.toFixed(2), +c.heading.toFixed(2)]),
     tumbles: () => tumbles.map((t) => [+t.pos.x.toFixed(1), +t.pos.z.toFixed(1), +t.speed.toFixed(2)]),
     lightAt: (i) => lanternLightAt(cows[i].mesh.localToWorld(new THREE.Vector3(0, 1, 0))),
     goto: (x, z, yaw, pitch) => { player.pos.set(x, 0, z); player.yaw = yaw; player.pitch = pitch ?? 0; },
