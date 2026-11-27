@@ -1,6 +1,7 @@
 // Bake the revolver candidates part by part, in the same compact format as the gloves.
-// usage: node gen-revolvers.mjs [step=0.00035] [outDir=revolvers/data]
-import { writeFileSync, mkdirSync } from 'node:fs';
+// usage: node gen-revolvers.mjs [step=0.00035] [outDir=revolvers/data] [only=regex on id/part]
+// Writes one packed file per gun: {id, meta, parts: {name: {vc, ic, i32, ps, origin, data}}} (revolver-model.js loads it).
+import { writeFileSync, mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { meshSDF } from './mesher.js';
 import { coltSAA, schofield } from './revolver-sdf.js';
 import { MeshoptSimplifier } from 'meshoptimizer';
@@ -8,8 +9,9 @@ const step = Number(process.argv[2] || 0.00035), OUT = process.argv[3] || 'revol
 mkdirSync(OUT, { recursive: true });
 await MeshoptSimplifier.ready;
 const guns = { colt75: coltSAA(7.5), colt475: coltSAA(4.75), schofield: schofield() };
-const meta = {};
 for (const [id, g] of Object.entries(guns)) {
+  const file = `${OUT}/${id}.json`, packed = existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')).parts : {};
+  const meta = {};
   meta[id] = { zMuz: g.zMuz, cylY: g.cylY, chamberR: g.chamberR, chamberZ: g.chamberZ, hammerPivot: g.hammerPivot, triggerPivot: g.triggerPivot, parts: [] };
   for (const [name, part] of Object.entries(g.parts)) {
     meta[id].parts.push(name);
@@ -39,8 +41,9 @@ for (const [id, g] of Object.entries(guns)) {
     const parts = i32 ? [I, pos, nrm, att] : [pos, I, nrm, att];
     const total = parts.reduce((s, a) => s + a.byteLength, 0), buf = Buffer.alloc(total);
     let o = 0; for (const a of parts) { Buffer.from(a.buffer, a.byteOffset, a.byteLength).copy(buf, o); o += a.byteLength; }
-    writeFileSync(`${OUT}/${id}-${name}.json`, JSON.stringify({ vc, ic: idx.length, i32, ps: 1 / PS, origin, data: buf.toString('base64') }));
+    packed[name] = { vc, ic: idx.length, i32, ps: 1 / PS, origin, data: buf.toString('base64') };
     console.log(`${id}/${name}: ${nv} -> ${vc} verts, ${idx.length / 3} tris, ${(total / 1024).toFixed(0)} KB, ${Date.now() - t0} ms`);
   }
+  writeFileSync(file, JSON.stringify({ id, meta: meta[id], parts: packed }));
 }
-writeFileSync(`${OUT}/guns.json`, JSON.stringify(meta));
+
