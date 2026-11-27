@@ -16,7 +16,7 @@ import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, upd
 import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 import { NL, hillH } from './night-layout.js';
-import { loadMonster, startScare, scareStep, MONSTERS } from './monster-model.js';
+import { loadMonster, startScare, scareStep, MONSTERS, idleStep, startEat, eatStep } from './monster-model.js';
 import { makeMonsterSound } from './monster-sound.js';
 
 const DEBUG = location.hash === '#debug';
@@ -1073,14 +1073,14 @@ function shoot() {
   _rd.copy(NIGHT_SCENE && shotAimed ? shotDir : fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
   shotAimed = false;
   let best = Infinity, hit = null;
-  if (NIGHT_SCENE) [hit, best] = rayCow(_ro, _rd);
+  if (NIGHT_SCENE) { [hit, best] = rayCow(_ro, _rd); const tf = rayFight(_ro, _rd); if (tf < best) { best = tf; hit = 'fight'; } }
   else for (const c of cows) {
     if (c.dead) continue;
     for (const b of c.blockers) { const t = raySphere(_ro, _rd, _rc.set(b.x, 0.95 * c.s, b.z), 0.43 * c.s); if (t < best) { best = t; hit = c; } }
     const t = raySphere(_ro, _rd, _rc.set(c.headWorld.x, c.headWorld.y, c.headWorld.z), 0.24 * c.s); if (t < best) { best = t; hit = c; }
   }
   const tg = _rd.y < -1e-3 ? -_ro.y / _rd.y : Infinity;
-  if (hit && best < tg && best < 80) { if (NIGHT_SCENE) nightHit(hit); else killCow(hit, _rd); }
+  if (hit && best < tg && best < 80) { if (hit === 'fight') fightHit(); else if (NIGHT_SCENE) nightHit(hit); else killCow(hit, _rd); }
   else if (tg < 70) puff(_rc.copy(_ro).addScaledVector(_rd, tg), 0.6, [0.16, 0.13, 0.1]);
   _ga.set(0, 0, MUZZLE_Z - 0.06); gunPivot.localToWorld(_ga); _ga.applyQuaternion(camera.quaternion).add(camera.position);
   for (let i = 0; i < 4; i++) puff(_ga, 1.3, [0.55, 0.54, 0.52], _rd);
@@ -1578,6 +1578,7 @@ function makeNightHerd(geos) {
 }
 // a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, lantern lit or not
 function nightTap(nx, ny, finger) {
+  if (fight.on) return;
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
   tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
@@ -1702,10 +1703,112 @@ function decockGun() { if (rev && rev.state.cocked && !rev.state.anim) { rev.sta
 function nightDry() { if (NIGHT_SCENE && !night.toldReload) { night.toldReload = true; setTimeout(() => say(TOUCH ? NL.lines.reload : NL.lines.reloadPC, 3.4), 400); } }
 // what the bullet found in the night: a cow is lost (it falls), the thing is hit (2단계-4)
 function nightHit(c) {
-  if (c.mon) { c.shot = true; return; }
+  if (c.mon) { beginFight(c); return; }
   killCow(c, _rd);
 }
+// ---------------- the gunfight (2단계-4): shot, the thing shows what it is, and comes for you ----------------
+const fight = { on: false, phase: '', t: 0, hits: 0, pos: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), M: null, endT: -1 };
+const _fq = new THREE.Quaternion(), _fe = new THREE.Euler(), _fd = new THREE.Vector3(), _fh = new THREE.Vector3();
+function beginFight(c) {
+  const M = c.mon.M;
+  c.gone = true; c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false;
+  ui.sub.classList.remove('show'); subTimer = 0;
+  if (!M) return; // not loaded (slow connection): it is simply gone
+  Object.assign(fight, { on: true, phase: 'rise', t: 0, hits: 0, M, endT: -1 });
+  fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
+  M.root.visible = true; placeFight();
+  if (msnd) msnd.pounce(M.info.roar); buzz(200); // 임시: its own roar while it changes (기획서: 소 울음이 일그러져 포효가 됨 — 소리 후보는 아직)
+  for (const k of cows) if (k !== c && !k.dead && !k.gone) scatter(k, fight.pos);
+}
+function placeFight() { // standing on the ground where it is, turned to you
+  const M = fight.M, yaw = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
+  M.root.quaternion.setFromEuler(_fe.set(0, yaw, 0)); M.root.position.copy(fight.pos);
+}
+function fightHit() {
+  const F = NL.fight; fight.hits++; buzz(60);
+  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; if (msnd) msnd.gape(fight.M.id); return; }
+  _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
+  fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, F.push); fight.phase = 'pushed'; fight.t = 0;
+  if (msnd) msnd.gape(fight.M.id);
+}
+// does a shot hit the thing? its head and its body
+function rayFight(o, d) {
+  if (!fight.on || fight.phase === 'die' || fight.phase === 'eat') return Infinity;
+  const M = fight.M; _fh.fromArray(M.meta.headPivot).applyQuaternion(M.root.quaternion).add(M.root.position);
+  return Math.min(raySphere(o, d, _fh, 0.4), raySphere(o, d, _fd.set(0, 0.5 * M.meta.height, 0).add(M.root.position), 0.6));
+}
+function fightStep(dt, time) {
+  if (!fight.on) { if (fight.endT >= 0 && (fight.endT += dt) > NL.fight.back) { fight.endT = -1; for (const k of cows) if (!k.dead && !k.gone) scatterBack(k); } return; }
+  const F = NL.fight, M = fight.M; fight.t += dt;
+  M.own.uLightP.value.copy(lanternLight.position);
+  if (fight.phase === 'eat') {
+    const r = eatStep(M, camera, dt, {
+      freeze: () => { if (msnd) msnd.freeze(M.info.roar); },
+      roar: () => { if (msnd) msnd.pounce(M.info.roar); buzz(90); },
+      black: () => { if (msnd) msnd.bite('gulp'); buzz([260, 120, 90]); hurt(); M.root.visible = false; fight.wakeT = 0; },
+    });
+    if (r) { finalPass.uniforms.uFade.value = r.fade; night.shake = r.shake; }
+    // eaten: the night ends there; you wake the next morning (it was real: the hurt stays, the count is gone, so is the thing)
+    if (fight.wakeT !== undefined && (fight.wakeT += dt) > F.wake && night.endT < 0) {
+      if (hp > 0) { ui.end.querySelector('h1').textContent = NL.lines.morningTitle; ui.end.querySelector('.sub').textContent = NL.lines.morning; }
+      fight.on = false; night.endT = 2.4; finalPass.uniforms.uFade.value = 1;
+    }
+    return;
+  }
+  idleStep(M, dt, time);
+  if (fight.phase === 'rise') { // it unfolds out of the cow's shape
+    const k = clamp(fight.t / F.rise, 0, 1); M.root.scale.set(1, 0.35 + 0.65 * smooth(k), 1); night.shake = 0.4 * (1 - k);
+    if (k >= 1) { fight.phase = 'pause'; fight.t = 0; fight.wait = rand(...F.pause); }
+  } else if (fight.phase === 'pause') {
+    const shadow = M.id === 'm5' && lamp.level > F.shadowLight; // the shadow only moves when the light is weak
+    if (fight.t >= fight.wait && !shadow) {
+      _fd.copy(camera.position).sub(fight.pos).setY(0); const left = _fd.length() - F.reach; _fd.normalize();
+      const far = rand(...F.dash) * (M.id === 'm3' ? F.crawl : 1);
+      fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, Math.min(far, Math.max(0, left) + 0.05)); fight.phase = 'dash'; fight.t = 0;
+    }
+  } else if (fight.phase === 'dash' || fight.phase === 'pushed') {
+    const k = clamp(fight.t / (fight.phase === 'pushed' ? 0.15 : F.dashTime), 0, 1);
+    fight.pos.lerpVectors(fight.from, fight.to, fight.phase === 'pushed' ? 1 - (1 - k) ** 3 : smooth(k)); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
+    if (k >= 1) {
+      if (Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z) <= F.reach + 0.1) { fight.phase = 'eat'; fight.t = 0; startEat(M); return; }
+      fight.phase = 'pause'; fight.t = 0; fight.wait = rand(...F.pause) / (M.id === 'm3' ? F.crawl : 1);
+    }
+  } else if (fight.phase === 'die') { // it goes down into the dark ground
+    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6;
+    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
+  }
+  if (fight.phase !== 'eat') placeFight();
+}
+// the other cows: startled, they walk off away from it; later they come back and stand where they stood
+function scatter(c, from) {
+  c.home ??= { x: c.mesh.position.x, z: c.mesh.position.z, yaw: c.heading };
+  _fd.set(c.mesh.position.x - from.x, 0, c.mesh.position.z - from.z); if (_fd.lengthSq() < 1e-4) _fd.set(1, 0, 0); _fd.normalize();
+  c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.mesh.position.x + _fd.x * rand(...NL.fight.scatter), c.mesh.position.z + _fd.z * rand(...NL.fight.scatter)), t: 0, end: null };
+  c.walk.dur = c.walk.from.distanceTo(c.walk.to) / NL.fight.scatterSpeed;
+}
+function scatterBack(c) {
+  if (!c.home) return;
+  c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.home.x, c.home.z), t: 0, end: c.home.yaw };
+  c.walk.dur = Math.max(0.5, c.walk.from.distanceTo(c.walk.to) / NL.fight.scatterSpeed);
+}
+function walkCows(dt) {
+  for (const c of cows) {
+    const w = c.walk; if (!w || c.dead) continue;
+    w.t += dt; const k = clamp(w.t / w.dur, 0, 1), x = lerp(w.from.x, w.to.x, smooth(k)), z = lerp(w.from.y, w.to.y, smooth(k));
+    const goYaw = Math.atan2(w.to.x - w.from.x, w.to.y - w.from.y), yaw = k < 1 ? goYaw : (w.end ?? goYaw);
+    c.heading = c.heading + Math.atan2(Math.sin(yaw - c.heading), Math.cos(yaw - c.heading)) * Math.min(1, dt * 5);
+    const fx = Math.sin(c.heading) * 0.9, fz = Math.cos(c.heading) * 0.9, hf = groundH(x + fx, z + fz), lean = NL.lean * Math.atan2(groundH(x - fx, z - fz) - hf, 1.8);
+    c.y0 = hf + 0.9 * Math.sin(lean);
+    c.mesh.position.set(x, c.y0, z); c.mesh.rotation.y = c.heading; c.mesh.rotation.x = lean; c.mesh.updateMatrixWorld(true);
+    c.blockers.forEach((b, j) => { const p = _fd.set(0, 0, [0.55, 0, -0.6][j] * 0.92).applyMatrix4(c.mesh.matrixWorld); b.x = p.x; b.z = p.z; });
+    const moving = k < 1;
+    c.gait = damp(c.gait || 0, moving ? 1 : 0, 6, dt); c.gaitPhase = (c.gaitPhase || 0) + dt * NL.fight.scatterSpeed / 1.45 * c.gait;
+    c.mesh.material.userData.own.uGait.value.set(c.gaitPhase, c.gait, 0, 0);
+    if (!moving && c.gait < 0.02) { c.walk = null; if (w.end !== null) c.home = null; }
+  }
+}
 function nextStation() {
+  if (fight.on) return; // 임시: no walking away from it
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
   if (night.i === lastStation()) { night.endT = 0; return; } // 임시: going on from the last place ends the night (stage 1)
@@ -1756,6 +1859,7 @@ function nightStep(dt) {
   scareFrame(dt); hurtFrame(dt);
   if (now < night.readyAt || night.walking) return;
   if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
+  if (fight.on) return;
   if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
   if (night.i === L && night.finishAt < 0 && stationDone(L)) night.finishAt = now + NL.endWait * 1000;
   if (night.finishAt > 0 && now >= night.finishAt) { night.endT = 0; return; }
@@ -2032,7 +2136,7 @@ function frame(now) {
   if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
-  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); puffStep(dt); }
+  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); puffStep(dt); fightStep(dt, time); walkCows(dt); }
   sound.update(camera.position, fwd, cows, time);
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -2469,6 +2573,8 @@ if (DEBUG) {
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
+    fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp }),
+    shootMonster: () => { const c = monster; if (c && !c.gone) { nightHit(c); return true; } return false; }, hitFight: () => fightHit(),
     gunState: () => rev && { cocked: rev.state.cocked, anim: rev.state.anim?.type || null, chambers: rev.state.chambers.slice(), top: rev.state.top },
     shootAt: (x, y) => nightShoot(x, y), cock: () => nightCock(), dead: () => cows.filter((c) => c.dead).length,
     nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
