@@ -1,7 +1,8 @@
 // Lighter copies of the baked game cows for pages that only show them standing (the monster page).
 // Same packed format as gen-slice.mjs; triangles reduced with meshoptimizer, every vertex attribute carried over.
-// usage: node gen-cows-lite.mjs [error=0.0025] [outDir=monsters/cows]
+// usage: node gen-cows-lite.mjs [error=0.0025] [outDir=monsters/cows]   (monsters/cows-far at 0.003 for the cows far back)
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
+import { basename } from 'node:path';
 import { MeshoptSimplifier } from 'meshoptimizer';
 const ERR = Number(process.argv[2] || 0.0025), OUT = process.argv[3] || 'monsters/cows';
 mkdirSync(OUT, { recursive: true });
@@ -24,7 +25,7 @@ for (const m of meta) {
   let q = 0; for (const a of parts) { Buffer.from(a.buffer, a.byteOffset, a.byteLength).copy(b, q); q += a.byteLength; }
   const file = m.file.replace('cows/', '');
   writeFileSync(`${OUT}/${file}`, JSON.stringify({ data: b.toString('base64') }));
-  out.push({ ...m, file: `cows/${file}`, vc: n, ic: I.length });
+  out.push({ ...m, file: `${basename(OUT)}/${file}`, vc: n, ic: I.length });
   console.log(`${file}: ${vc} -> ${n} verts, ${ic / 3} -> ${I.length / 3} tris, ${(total / 1024).toFixed(0)} KB`);
 }
 writeFileSync(`${OUT}/cows.json`, JSON.stringify(out));

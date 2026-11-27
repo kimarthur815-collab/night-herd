@@ -13,7 +13,7 @@ export function makeMonsterSound(opt = {}) {
     if (!a) { try { a = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
     out = a.createGain(); out.gain.value = 0.9;
     muffle = a.createBiquadFilter(); muffle.type = 'lowpass'; muffle.frequency.value = 18000; muffle.Q.value = 0.7;
-    const comp = a.createDynamicsCompressor(); comp.threshold.value = -12; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.2;
+    const comp = a.createDynamicsCompressor(); comp.threshold.value = -8; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
     // a soft ceiling after the compressor: bone clicks are too quick for it, and must not clip
     const lim = a.createWaveShaper(), n = 2048, cv = new Float32Array(n);
     for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1, ax = Math.abs(x); cv[i] = Math.sign(x) * (ax < 0.7 ? ax : 0.7 + 0.28 * Math.tanh((ax - 0.7) / 0.28)); }
@@ -155,6 +155,7 @@ export function makeMonsterSound(opt = {}) {
     let tail = sum.connect(top);
     if (o.hp) { const hp = a.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = o.hp; hp.Q.value = 0.7; tail = tail.connect(hp); }
     const g = a.createGain();
+    o = { ...o, gain: o.gain * (o.loud ?? 1) };
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain, t + (o.att ?? 0.03));
     if (o.swell) g.gain.exponentialRampToValueAtTime(o.gain * o.swell, t + dur * 0.35);
     g.gain.setValueAtTime(o.gain * (o.swell ?? 1), t + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, end);
@@ -192,7 +193,7 @@ export function makeMonsterSound(opt = {}) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
     // tuned against the reference clip: most of the energy at 1-6 kHz, little below 400 Hz
-    const bright = { breathHz: 4600, chest: 0.08, chestHz: 450, top: 11000, hp: 1050, pitch: 1.8, fmul: 1.42 }; // raised three times on request: well above the reference
+    const bright = { breathHz: 4600, chest: 0.08, chestHz: 450, top: 11000, hp: 1050, pitch: 1.8, fmul: 1.42, loud: 1.7 }; // louder on request // raised three times on request: well above the reference
     tone(t, 0.16, { f0: 95, f1: 48, gain: 0.35, att: 0.003 }); // a thump of weight behind it
     if (kind === 'growlRoar') voice(t, { ...bright, dur: 1.1, f: [[0, 205], [0.1, 280], [0.45, 215], [1.1, 150]], gain: 0.7, rattle: 0.5, rattleHz: 33, rattleHz1: 24, drive: 9, breath: 0.85, formants: [[1250, 3, 1], [2550, 4, 1], [3750, 5, 0.65]], formantSweep: 0.85, att: 0.02 });
     if (kind === 'machine') { voice(t + 0.02, { ...bright, dur: 1.05, f: [[0, 245], [0.08, 330], [1.05, 175]], gain: 0.7, rattle: 0.7, rattleHz: 42, drive: 12, breath: 0.7, breathHz: 5000, fifth: 0.25, formants: [[1500, 3, 1], [2900, 4, 1], [4300, 6, 0.6]], hp: 1100, att: 0.012 }); machine(t); }

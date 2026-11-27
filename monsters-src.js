@@ -7,7 +7,7 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
-import { makeMonsterSound, POUNCE_KINDS, SCARE_KINDS } from './monster-sound.js';
+import { makeMonsterSound, POUNCE_KINDS } from './monster-sound.js';
 
 const INFO = {
   m3: {
@@ -38,7 +38,13 @@ renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFShadowMap;
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x030303);
+const skyTex = (() => {
+  const c = document.createElement('canvas'); c.width = 2; c.height = 256;
+  const x = c.getContext('2d'), g = x.createLinearGradient(0, 0, 0, 256);
+  g.addColorStop(0, '#060606'); g.addColorStop(0.3, '#161616'); g.addColorStop(0.48, '#232323'); g.addColorStop(0.62, '#0c0c0c'); g.addColorStop(1, '#040404');
+  x.fillStyle = g; x.fillRect(0, 0, 2, 256); const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
+scene.background = skyTex;
 scene.fog = new THREE.FogExp2(0x030303, 0.06);
 const camera = new THREE.PerspectiveCamera(50, 1, 0.05, 80);
 
@@ -68,6 +74,20 @@ groundMat.onBeforeCompile = (sh) => {
 const ground = new THREE.Mesh(new THREE.PlaneGeometry(80, 80), groundMat);
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
+
+// a rise behind the herd: the ground climbs from a few metres back, so some cows (and eyes) stand higher up
+function hillH(x, z) {
+  const u = Math.min(1, Math.max(0, (-z - 2.6) / 6.5)), s = u * u * (3 - 2 * u);
+  return s * (1.7 + 0.55 * Math.sin(x * 0.23 + 1.0) + 0.35 * Math.sin(x * 0.61 + 2.0)) - 0.03;
+}
+{
+  const g = new THREE.PlaneGeometry(60, 22, 120, 44); g.rotateX(-Math.PI / 2); g.translate(0, 0, -13.6);
+  const p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) p.setY(i, hillH(p.getX(i), p.getZ(i)));
+  g.computeVertexNormals();
+  const hill = new THREE.Mesh(g, groundMat); hill.receiveShadow = true; scene.add(hill);
+}
+
 // the herd behind: pairs of eyes catching the light, now and then blinking
 const eyeTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32); g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)'); g.addColorStop(0.5, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
 const herd = [];
@@ -75,7 +95,7 @@ const herd = [];
   let s = 7;
   const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
   for (let i = 0; i < 16; i++) {
-    const d = 7 + r() * 16, a = (r() - 0.5) * 1.5, x = Math.sin(a) * d, z = -Math.cos(a) * d + 2.5, y = 1.2 + r() * 0.3, look = (r() - 0.5) * 0.5;
+    const d = 7 + r() * 16, a = (r() - 0.5) * 1.5, x = Math.sin(a) * d, z = -Math.cos(a) * d + 2.5, y = hillH(x, z) + 1.2 + r() * 0.3, look = (r() - 0.5) * 0.5;
     const pair = new THREE.Group(); pair.position.set(x, y, z); pair.rotation.y = look;
     for (const side of [-1, 1]) {
       const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: eyeTex, color: 0xdfffe8, blending: THREE.AdditiveBlending, depthWrite: false, fog: false, transparent: true }));
@@ -236,7 +256,7 @@ function cowMaterial(coat, face, phase) {
           c = mix(c, c * 0.5, mud * 0.55); c = mix(c, c * 0.3, vCMat.w * 0.85);
           c = mix(c, vec3(0.2, 0.16, 0.16), vCMat.y); c = mix(c, vec3(0.03, 0.028, 0.026), vCMat.z);
           c *= mix(1.0, vCMat.x, 0.55); c = mix(c, vec3(0.008), vCEye);
-          c = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11)) * 0.8 + 0.01), uIR);
+          c = mix(c, vec3(dot(c, vec3(0.3, 0.59, 0.11)) * 0.34 + 0.004), uIR);
           diffuseColor.rgb = c; }`)
       .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>\nroughnessFactor = mix(roughnessFactor, 0.35, vCMat.y); roughnessFactor = mix(roughnessFactor, 0.08, vCEye);`)
       .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
@@ -270,26 +290,34 @@ function parseCow(j, m) {
 }
 const lightP = { value: new THREE.Vector3() };
 const row = new THREE.Group(); scene.add(row);
-let cowGeos = null;
-const loadCows = (async () => {
-  const meta = await (await fetch('cows/cows.json')).json();
-  cowGeos = await Promise.all(meta.map(async (m) => parseCow(await (await fetch(m.file)).json(), m)));
-})();
-// cows side by side, a little ragged, the gap in the middle as wide as the monster needs
+let cowGeos = null, cowFar = null;
+const loadSet = async (dir) => { const meta = await (await fetch(`${dir}/cows.json`)).json(); return Promise.all(meta.map(async (m) => parseCow(await (await fetch(m.file)).json(), m))); };
+const loadCows = (async () => { [cowGeos, cowFar] = await Promise.all([loadSet('cows'), loadSet('cows-far')]); })();
+// cows crowded loosely as a herd stands, not in a drawn line: a ragged front row with a gap where the monster is,
+// a few just behind it, and some up on the rise further back, dark shapes with their eyes catching the light
 function layoutRow(M) {
   row.clear();
   if (!cowGeos) return;
-  const b = M.meta.bounds, half = Math.max(-b[0][0], b[1][0]) + 0.4;
-  let seed = 11; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
-  const coats = [0.82, 0.72, 0.7, 0.85, 0.62, 0.78, 0.66, 0.8];
-  for (let i = 0; i < 8; i++) {
-    const side = i % 2 ? 1 : -1, k = Math.floor(i / 2), x = side * (half + 0.35 + k * 1.15 + (r() - 0.5) * 0.15);
-    const mesh = new THREE.Mesh(cowGeos[i % cowGeos.length], cowMaterial(coats[i] * 0.55, Math.min(1, coats[i] * 0.55 + 0.25), r() * 6));
-    mesh.position.set(x, 0, (r() - 0.5) * 0.5 - 0.1); mesh.rotation.y = (r() - 0.5) * 0.4; mesh.scale.setScalar(0.95 + r() * 0.1);
-    mesh.castShadow = mesh.receiveShadow = true;
+  const b = M.meta.bounds, half = Math.max(-b[0][0], b[1][0]) + 0.3;
+  let seed = 23; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+  const add = (geos, x, z, yaw, near, coat) => {
+    const mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], cowMaterial(coat, Math.min(1, coat + 0.06 + r() * 0.1), r() * 6));
+    mesh.position.set(x, z < -2.6 ? hillH(x, z) : 0, z); mesh.rotation.y = yaw; mesh.scale.setScalar(0.92 + r() * 0.14);
+    mesh.castShadow = near; mesh.receiveShadow = true;
     mesh.userData.nod = { t: r() * 5, goal: 0, v: 0, turn: (r() - 0.5) * 0.3 };
     row.add(mesh);
+  };
+  const coat = () => 0.14 + r() * 0.2;
+  for (const side of [-1, 1]) { // the front: bunched and uneven, some forward, some back, some turned
+    let x = half + 0.2 + r() * 0.35;
+    for (let k = 0; k < 4; k++) {
+      const back = r() < 0.35;                                 // now and then one stands a rank behind
+      add(back ? cowFar : cowGeos, side * x, back ? -1.6 - r() * 0.8 : -1.1 + r() * 2.0, (r() - 0.5) * 1.2 + (r() < 0.3 ? side * 0.9 : 0), !back, coat());
+      x += (back ? 0.35 : 0.65) + r() * 0.85;
+    }
   }
+  for (let k = 0; k < 3; k++) add(cowFar, (r() - 0.5) * 3.4, -1.9 - r() * 0.9, (r() - 0.5) * 1.0, false, coat()); // just behind it
+  for (let k = 0; k < 6; k++) add(cowFar, (r() - 0.5) * 11, -5.2 - r() * 3.6, (r() - 0.5) * 1.2, false, coat() * 0.8); // up on the rise
 }
 function animateRow(dt) {
   for (const c of row.children) {
@@ -347,7 +375,8 @@ const rr = (a, b) => a + Math.random() * (b - a);
 const _fz = new THREE.Vector3(), _hy = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const snd = makeMonsterSound();
-let pounceKind = 'machine', scareKind = 'shake';
+let pounceKind = 'machine';
+const scareKind = 'fast'; // chosen: ② 멀리서 순식간에
 const biteKind = 'gulp'; // chosen: ③ 꿀꺽 삼킴
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
 // the pounce, in seconds from the tap: it goes still and quiet, snaps round with a roar and lunges,
@@ -583,9 +612,7 @@ $('pounce').addEventListener('click', () => { snd.unlock(); if (busy()) return; 
 $('scare').addEventListener('click', () => { snd.unlock(); if (busy()) return; cur.st.scare = 0; cur.st.fired = {}; cur.st.scareKind = scareKind; cur.st.scareSide = Math.random() < 0.5 ? 1 : -1; });
 $('gape').addEventListener('click', () => { snd.unlock(); if (!busy()) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); snd.gape(cur.id); } });
 $('sound').addEventListener('click', () => { snd.setEnabled(!snd.enabled); snd.unlock(); $('sound').textContent = snd.enabled ? '소리 켜짐' : '소리 꺼짐'; $('sound').classList.toggle('on', snd.enabled); });
-$('scareSel').innerHTML = Object.entries(SCARE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('roar').addEventListener('click', () => { snd.unlock(); if (!busy()) snd.preview(pounceKind); }); // its roar alone
-$('scareSel').addEventListener('change', (e) => { scareKind = e.target.value; });
 window.addEventListener('pointerdown', () => snd.unlock(), { capture: true });
 
 function resize() {
@@ -613,7 +640,7 @@ setMonster(new URLSearchParams(location.search).get('m') || 'm3').then(() => req
 // for tests: freeze the clock, jump the motion, pick a moment of the pounce
 window.__mon = {
   setSpeed(s) { speed = s; }, get cur() { return cur; }, setMonster, setLight, setView,
-  setPounce(k) { pounceKind = k; }, setScare(k) { scareKind = k; }, snd,
+  setPounce(k) { pounceKind = k; }, snd,
   where() { // screen positions (-1..1) of the head pivot and the eyes, for framing checks
     if (!cur) return null; const out = {};
     const pj = (a) => { const v = new THREE.Vector3().fromArray(a).applyQuaternion(cur.root.quaternion).add(cur.root.position).project(camera); return [+v.x.toFixed(2), +v.y.toFixed(2), +v.z.toFixed(3)]; };
