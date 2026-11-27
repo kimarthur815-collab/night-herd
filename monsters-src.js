@@ -247,9 +247,9 @@ const rr = (a, b) => a + Math.random() * (b - a);
 const _fz = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
 const snd = makeMonsterSound();
-let pounceKind = 'shriek', biteKind = 'crunch';
+let pounceKind = 'growlRoar', biteKind = 'crunch';
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
-// the pounce, in seconds from the tap: it goes still and quiet, snaps round with a shriek and lunges,
+// the pounce, in seconds from the tap: it goes still and quiet, snaps round with a roar and lunges,
 // you are pulled into the open mouth, the jaws shut over the screen, the light through the teeth dies, black, and back
 const EAT = { snap: 0.45, lunge: 0.7, engulf: 1.0, shut: 1.13, dark0: 1.35, dark1: 2.6, reset: 3.1, back0: 3.6, back1: 4.5 };
 const ease = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
@@ -491,8 +491,8 @@ $('gape').addEventListener('click', () => { snd.unlock(); if (cur && cur.st.eat 
 $('sound').addEventListener('click', () => { snd.setEnabled(!snd.enabled); snd.unlock(); $('sound').textContent = snd.enabled ? '소리 켜짐' : '소리 꺼짐'; $('sound').classList.toggle('on', snd.enabled); });
 $('pounceSel').innerHTML = Object.entries(POUNCE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
 $('biteSel').innerHTML = Object.entries(BITE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
-$('pounceSel').addEventListener('change', (e) => { pounceKind = e.target.value; });
-$('biteSel').addEventListener('change', (e) => { biteKind = e.target.value; });
+$('pounceSel').addEventListener('change', (e) => { pounceKind = e.target.value; if (!cur || cur.st.eat < 0) snd.preview(pounceKind); }); // pick one, hear it
+$('biteSel').addEventListener('change', (e) => { biteKind = e.target.value; if (!cur || cur.st.eat < 0) snd.previewBite(biteKind); });
 window.addEventListener('pointerdown', () => snd.unlock(), { capture: true });
 
 function resize() {

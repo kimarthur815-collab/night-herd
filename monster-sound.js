@@ -1,15 +1,15 @@
 // monster-sound.js — the monsters' sounds, synthesized with Web Audio (no recordings).
 // I can't hear these: every sound here is a candidate for the ear to judge.
 // Breathing and growls run while a monster is on screen; the pounce, the bite and the dark are one-shots.
-export const POUNCE_KINDS = { shriek: '① 날카로운 비명', shriekRoar: '② 비명 + 낮은 포효', gaspShriek: '③ 숨 들이켜고 비명' };
+export const POUNCE_KINDS = { growlRoar: '① 그르렁 → 우르렁', machine: '② 기계음 섞인 포효', deep: '③ 낮고 묵직한 포효', gargle: '④ 끓는 목 그르렁 포효' };
 export const BITE_KINDS = { crunch: '① 콱 깨묾', chew: '② 우두둑 씹기', gulp: '③ 꿀꺽 삼킴' };
 
-export function makeMonsterSound() {
-  let a = null, out, bus, muffle, verbIn, noiseBuf, loop = null, enabled = true;
+export function makeMonsterSound(opt = {}) {
+  let a = opt.context || null, out, bus, muffle, verbIn, noiseBuf, loop = null, enabled = true;
   const timers = { a: 0, b: 0, c: 0 };
   function ctx() {
-    if (a) return a;
-    try { a = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; }
+    if (a && out) return a;
+    if (!a) { try { a = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
     out = a.createGain(); out.gain.value = 0.9;
     muffle = a.createBiquadFilter(); muffle.type = 'lowpass'; muffle.frequency.value = 18000; muffle.Q.value = 0.7;
     const comp = a.createDynamicsCompressor(); comp.threshold.value = -12; comp.ratio.value = 5; comp.attack.value = 0.003; comp.release.value = 0.2;
@@ -105,31 +105,91 @@ export function makeMonsterSound() {
     noise(t + 0.04, 1.1, { type: 'lowpass', f0: 600, f1: 250, q: 1, gain: 0.06, att: 0.2 });
   }
 
-  // ---------- the pounce: a shriek ----------
-  function shriek(t) {
-    const sh = crush(3); sh.connect(out); sh.connect(verbIn);
-    noise(t, 0.95, { f0: 1500, f1: 3800, q: 2, gain: 0.55, att: 0.015, dest: sh });
-    tone(t, 0.9, { type: 'sawtooth', f0: 950, f1: 260, gain: 0.28, att: 0.01, dest: sh });
-    tone(t + 0.02, 0.85, { type: 'square', f0: 1400, f1: 480, gain: 0.12, att: 0.01, dest: sh });
-    noise(t, 0.7, { type: 'lowpass', f0: 900, f1: 90, q: 1, gain: 0.45, att: 0.005 });
+  // ---------- the pounce: a monster's roar, not a human scream ----------
+  // A throat: detuned saws and a sub under a pitch contour, roughened by a fast flutter (the "그르렁" rattle),
+  // driven hard into a waveshaper, then shaped by vowel-like resonances (the "우르렁" of an open throat).
+  function voice(t, o) {
+    const dur = o.dur, end = t + dur;
+    const pre = a.createGain(); pre.gain.value = 1;
+    const curve = o.f; // [[seconds, Hz], ...]
+    const freqAt = (osc, mul) => { osc.frequency.setValueAtTime(curve[0][1] * mul, t); for (const [ct, hz] of curve.slice(1)) osc.frequency.exponentialRampToValueAtTime(hz * mul, t + ct); };
+    const oscs = [];
+    for (const [mul, type, g] of [[1, 'sawtooth', 0.5], [1.012, 'sawtooth', 0.4], [0.5, o.subType || 'sawtooth', o.sub ?? 0.45], [1.497, 'square', o.fifth ?? 0]]) {
+      if (!g) continue;
+      const s = a.createOscillator(); s.type = type; freqAt(s, mul);
+      const sg = a.createGain(); sg.gain.value = g; s.connect(sg).connect(pre); oscs.push(s);
+    }
+    // jitter: the pitch wobbles unevenly, like air tearing through a throat
+    const jit = a.createOscillator(); jit.type = 'sawtooth'; jit.frequency.value = o.jitRate ?? 11;
+    const jg = a.createGain(); jg.gain.value = curve[0][1] * (o.jit ?? 0.06); jit.connect(jg);
+    for (const s of oscs) jg.connect(s.frequency);
+    oscs.push(jit);
+    // the rattle: fast amplitude flutter
+    const rat = a.createGain(); rat.gain.value = 1 - (o.rattle ?? 0.5) / 2;
+    const rl = a.createOscillator(); rl.type = 'square'; rl.frequency.setValueAtTime(o.rattleHz ?? 28, t);
+    if (o.rattleHz1) rl.frequency.linearRampToValueAtTime(o.rattleHz1, end);
+    const rlg = a.createGain(); rlg.gain.value = (o.rattle ?? 0.5) / 2; rl.connect(rlg).connect(rat.gain); oscs.push(rl);
+    // breath and spit in the throat
+    const ns = a.createBufferSource(); ns.buffer = noiseBuf; ns.loop = true;
+    const nf = a.createBiquadFilter(); nf.type = 'bandpass'; nf.frequency.value = o.breathHz ?? 1100; nf.Q.value = 0.6;
+    const ng = a.createGain(); ng.gain.value = o.breath ?? 0.5; ns.connect(nf).connect(ng).connect(pre);
+    pre.connect(rat);
+    const drive = crush(o.drive ?? 6); rat.connect(drive);
+    // open-throat resonances, plus the chest
+    const sum = a.createGain(); sum.gain.value = 1;
+    for (const [hz, q, g] of o.formants || [[520, 4, 1], [950, 5, 0.8], [2300, 6, 0.35]]) {
+      const f = a.createBiquadFilter(); f.type = 'bandpass'; f.frequency.setValueAtTime(hz, t);
+      if (o.formantSweep) f.frequency.exponentialRampToValueAtTime(hz * o.formantSweep, end);
+      f.Q.value = q; const fg = a.createGain(); fg.gain.value = g; drive.connect(f).connect(fg).connect(sum);
+    }
+    const chest = a.createBiquadFilter(); chest.type = 'lowpass'; chest.frequency.value = o.chestHz ?? 260; const cg = a.createGain(); cg.gain.value = o.chest ?? 0.9;
+    drive.connect(chest).connect(cg).connect(sum);
+    const top = a.createBiquadFilter(); top.type = 'lowpass'; top.frequency.value = o.top ?? 5200;
+    const g = a.createGain();
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(o.gain, t + (o.att ?? 0.03));
+    if (o.swell) g.gain.exponentialRampToValueAtTime(o.gain * o.swell, t + dur * 0.35);
+    g.gain.setValueAtTime(o.gain * (o.swell ?? 1), t + dur * 0.55); g.gain.exponentialRampToValueAtTime(0.0001, end);
+    sum.connect(top).connect(g); g.connect(out); g.connect(verbIn);
+    for (const s of oscs) { s.start(t); s.stop(end + 0.05); }
+    ns.start(t, Math.random()); ns.stop(end + 0.05);
+    return g;
   }
-  function roar(t) {
-    tone(t, 1.3, { type: 'sawtooth', f0: 96, f1: 46, gain: 0.5, lp: 700, am: 23, att: 0.03, verb: true });
-    noise(t, 1.2, { type: 'lowpass', f0: 600, f1: 180, q: 1, gain: 0.35, att: 0.03, verb: true });
+  // a low growl rising under the quiet before it comes (the "그르렁")
+  function growl(t, dur, gain) {
+    voice(t, { dur, f: [[0, 58], [dur, 66]], gain, rattle: 0.85, rattleHz: 19, rattleHz1: 26, drive: 3, breath: 0.35, breathHz: 600, formants: [[380, 5, 0.8], [700, 6, 0.4]], chest: 1.1, top: 1800, att: dur * 0.8, jit: 0.04 });
   }
-  function freeze(kind) { // everything goes quiet before it comes
+  // animatronic: a metal clank as the jaw slams open, a buzzing electric edge, a rattle like loose parts
+  function machine(t) {
+    for (const [hz, g, d] of [[410, 0.35, 0.5], [1132, 0.22, 0.35], [2214, 0.16, 0.25], [3660, 0.1, 0.18]]) tone(t, d, { f0: hz, gain: g, att: 0.002 });
+    noise(t, 0.05, { type: 'highpass', f0: 2500, q: 0.7, gain: 0.5, att: 0.001 });
+    const bz = a.createOscillator(); bz.type = 'square'; bz.frequency.setValueAtTime(110, t); bz.frequency.exponentialRampToValueAtTime(78, t + 1.2);
+    const ring = a.createGain(); ring.gain.value = 0; const rm = a.createOscillator(); rm.frequency.value = 730; rm.connect(ring.gain);
+    const bf = a.createBiquadFilter(); bf.type = 'bandpass'; bf.frequency.value = 1700; bf.Q.value = 1.2;
+    const bg = a.createGain(); env(bg, t, 0.02, 1.25, 0.22); const sh = crush(5);
+    bz.connect(ring).connect(sh).connect(bf).connect(bg).connect(out);
+    bz.start(t); rm.start(t); bz.stop(t + 1.3); rm.stop(t + 1.3);
+    // loose parts rattling: noise pulses through a short metal comb
+    const dl = a.createDelay(0.01); dl.delayTime.value = 0.0031; const fb = a.createGain(); fb.gain.value = 0.82; dl.connect(fb).connect(dl);
+    const cg = a.createGain(); cg.gain.value = 0.5; dl.connect(cg).connect(out);
+    for (let i = 0; i < 16; i++) noise(t + 0.05 + i * 0.055 + Math.random() * 0.02, 0.012, { type: 'highpass', f0: 1500, q: 0.7, gain: 0.25 * (1 - i / 18), att: 0.001, dest: dl });
+  }
+  function freeze(kind) { // everything goes quiet before it comes; for ① a growl rises in the quiet
     if (!ready()) return;
     const t = a.currentTime;
     bus.gain.cancelScheduledValues(t); bus.gain.setTargetAtTime(0.0001, t, 0.05);
-    if (kind === 'gaspShriek') noise(t + 0.05, 0.34, { f0: 420, f1: 1500, q: 1.5, gain: 0.16, att: 0.25 });
+    if (kind === 'growlRoar') growl(t + 0.02, 0.5, 0.22);
   }
   function pounce(kind) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
-    shriek(t);
-    if (kind === 'shriekRoar') roar(t + 0.05);
-    noise(t, 0.35, { type: 'lowpass', f0: 200, f1: 60, q: 0.8, gain: 0.5, att: 0.01 }); // the rush of air
+    if (kind === 'growlRoar') voice(t, { dur: 1.25, f: [[0, 120], [0.12, 165], [0.5, 120], [1.25, 72]], gain: 0.55, rattle: 0.55, rattleHz: 31, rattleHz1: 22, drive: 7, breath: 0.6, formants: [[560, 4, 1], [980, 5, 0.85], [2400, 6, 0.3]], formantSweep: 0.75, att: 0.025 });
+    if (kind === 'machine') { voice(t + 0.02, { dur: 1.2, f: [[0, 140], [0.1, 190], [1.2, 95]], gain: 0.42, rattle: 0.7, rattleHz: 38, drive: 10, breath: 0.4, fifth: 0.18, formants: [[640, 4, 1], [1250, 5, 0.9], [2700, 7, 0.5]], top: 6500, att: 0.015 }); machine(t); }
+    if (kind === 'deep') voice(t, { dur: 1.6, f: [[0, 70], [0.15, 95], [0.7, 72], [1.6, 46]], gain: 0.22, rattle: 0.4, rattleHz: 24, rattleHz1: 15, drive: 5, breath: 0.45, breathHz: 700, sub: 0.8, subType: 'triangle', formants: [[380, 4, 1], [720, 5, 0.7], [1900, 6, 0.18]], chest: 1.4, chestHz: 200, top: 3200, att: 0.04, swell: 1.15 });
+    if (kind === 'gargle') voice(t, { dur: 1.4, f: [[0, 105], [0.2, 140], [1.4, 68]], gain: 0.55, rattle: 0.95, rattleHz: 17, rattleHz1: 33, drive: 8, breath: 0.9, breathHz: 900, jit: 0.12, jitRate: 7, formants: [[470, 3, 1], [880, 4, 0.8], [2100, 5, 0.4]], formantSweep: 1.2, att: 0.03 });
+    noise(t, 0.35, { type: 'lowpass', f0: 220, f1: 60, q: 0.8, gain: 0.45, att: 0.008 }); // the rush of air as it comes
   }
+  function preview(kind) { if (ready()) { freeze(kind); setTimeout(() => { pounce(kind); setTimeout(restore, 1800); }, kind === 'growlRoar' ? 520 : 60); } }
+  function previewBite(kind) { if (ready()) { bite(kind); setTimeout(restore, 2600); } }
   // ---------- the bite, then the dark ----------
   function crunch(t, big = 1) {
     tone(t, 0.2, { f0: 150, f1: 38, gain: 0.9 * big, att: 0.003 });
@@ -153,11 +213,11 @@ export function makeMonsterSound() {
     muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(Math.max(300, muffle.frequency.value), t); muffle.frequency.exponentialRampToValueAtTime(18000, t + 0.9);
     bus.gain.cancelScheduledValues(t); bus.gain.setTargetAtTime(1, t, 0.4);
   }
-  function ready() { return enabled && ctx() && a.state === 'running'; }
+  function ready() { return enabled && ctx() && (opt.context || a.state === 'running'); }
   return {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    ambient, gape, freeze, pounce, bite, restore, stop: () => a && stopLoop(),
+    ambient, gape, freeze, pounce, bite, restore, preview, previewBite, stop: () => a && stopLoop(),
   };
 }
