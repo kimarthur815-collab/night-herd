@@ -245,6 +245,7 @@ class Monster {
       name: this.name, bounds: this.bounds, height: this.height,
       headPivot: h.o, headX: h.X, headY: h.Y, headZ: h.Z, jawHinge: hinge, jawOpen: this.head.open,
       split: this.split ?? null, neck: this.neckMeta ?? null, cams: this.cams, eyes: this.head.eyes.map((e) => h.toWorld(e)),
+      headL: this.head.L, hingeLocal: this.head.H,
     };
   }
 }
@@ -633,9 +634,8 @@ export class Shadow extends Monster {
   }
 }
 
+// ① Stander and ② Longneck were dropped after the first look (kept above, not baked)
 export const MONSTERS = [
-  ['m1', () => new Stander()],
-  ['m2', () => new Longneck()],
   ['m3', () => new Flayed()],
   ['m4', () => new Split()],
   ['m5', () => new Shadow()],

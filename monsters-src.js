@@ -7,20 +7,11 @@ import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 import { ShaderPass } from 'three/examples/jsm/postprocessing/ShaderPass.js';
+import { makeMonsterSound, POUNCE_KINDS, BITE_KINDS } from './monster-sound.js';
 
 const INFO = {
-  m1: {
-    chip: '① 일어선 것', title: '① 일어선 것', tag: '단서: 눈이 너무 높은 소 · 첫날 밤부터 · 가장 덜 무서움',
-    pts: ['뒷다리로 일어서면 2.5 m예요. 앞다리는 갈라진 발굽이 손가락처럼 길어진 팔이 돼요.', '머리가 옆으로 꺾여 있고 두 눈 높이가 달라요.', '가슴과 어깨의 털가죽이 길게 늘어져 흔들려요 (참고 사진 2).'],
-    skin: [0.34, 0.3, 0.26], wr: [0, 1, 0.15], anim: { breath: 0.55, jaw: 0.35, twitch: 0.8, neck: [0.05, 0.08], sway: 1 },
-  },
-  m2: {
-    chip: '② 목이 늘어난 것', title: '② 목이 늘어난 것', tag: '단서: 눈 사이가 너무 넓은 소 · 첫날 밤부터',
-    pts: ['굶은 소의 목이 2 m 넘게 늘어나 머리를 바로 앞에 매달아요.', '머리가 넓적하고 눈이 양옆 끝에 붙어 있어요.', '늘어난 목 가죽이 군데군데 찢어져 속살이 보여요.'],
-    skin: [0.3, 0.25, 0.21], wr: [0, 0.4, 1], anim: { breath: 0.5, jaw: 0.55, twitch: 1, neck: [0.1, 0.12], sway: 0 },
-  },
   m3: {
-    chip: '③ 가죽이 흘러내린 것', title: '③ 가죽이 흘러내린 것', tag: '단서: 눈만 있고 몸이 안 보이는 것 · 첫날 밤부터',
+    chip: '③ 가죽이 흘러내린 것', title: '③ 가죽이 흘러내린 것', tag: '단서: 눈만 있고 몸이 안 보이는 것 · 첫날 밤부터 · 셋 중 가장 덜 무서움',
     pts: ['가죽을 벗어 등 뒤로 흘려 내린 몸이 낮게 엎드려 있어요. 빠르게 기어 와요.', '긴 주둥이가 아주 크게 벌어져요 (참고 사진 1).', '헐떡이듯 숨을 빠르게 쉬어요.'],
     skin: [0.3, 0.26, 0.22], wr: [0, 1, 0.3], anim: { breath: 1.0, breathHz: 1.5, jaw: 0.7, twitch: 1.2, neck: [0, 0], sway: 1 },
   },
@@ -30,12 +21,12 @@ const INFO = {
     skin: [0.3, 0.27, 0.24], wr: [0.2, 1, 0.6], anim: { breath: 0.6, jaw: 0.45, twitch: 0.9, neck: [0, 0], sway: 0 },
   },
   m5: {
-    chip: '⑤ 그림자', title: '⑤ 그림자', tag: '단서: 랜턴을 꺼도 빛나는 눈 · 후반 · 가장 무서움',
+    chip: '⑤ 그림자', title: '⑤ 그림자', tag: '단서: 랜턴을 꺼도 빛나는 눈 · 후반 · 셋 중 가장 무서움',
     pts: ['3 m가 넘는 검은 형체가 땅에서 일어나요. 머리는 소 해골이고 눈구멍 깊은 곳에 작은 빛이 있어요.', '긴 팔 끝의 뼈 손가락으로 다가와요. 가장자리는 연기처럼 흩어져요.', '현상수배 괴물보다는 한 단계 아래로 두었어요.'],
     skin: [0.02, 0.02, 0.022], wr: [0, 1, 0], smoke: 1, eyeSelf: 2.2, eyeShine: 0.35, anim: { breath: 0.4, jaw: 0.4, twitch: 0.6, neck: [0, 0], sway: 1 },
   },
 };
-const ORDER = ['m1', 'm2', 'm3', 'm4', 'm5'];
+const ORDER = ['m3', 'm4', 'm5'];
 const $ = (id) => document.getElementById(id);
 
 // ---------------- renderer, scene ----------------
@@ -251,17 +242,29 @@ async function loadMonster(id) {
 }
 
 // ---------------- motion: breathing, a gaping jaw, twitches, and the pounce ----------------
-function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), lunge: -1 }; }
+function newState() { return { t: 0, gape: 0, gapeT: 3, jerkT: 1.5, head: new THREE.Vector3(), headGoal: new THREE.Vector3(), eat: -1, fired: {}, camK: 0, shake: 0, breathPh: 0 }; }
 const rr = (a, b) => a + Math.random() * (b - a);
+const _fz = new THREE.Vector3(), _qa = new THREE.Quaternion();
 const _h0 = new THREE.Vector3(), _to = new THREE.Vector3(), _p = new THREE.Vector3(), _q = new THREE.Vector3(), _up = new THREE.Vector3(0, 1, 0);
+const snd = makeMonsterSound();
+let pounceKind = 'shriek', biteKind = 'crunch';
+const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch (e) { /* no vibration */ } };
+// the pounce, in seconds from the tap: it goes still and quiet, snaps round with a shriek and lunges,
+// you are pulled into the open mouth, the jaws shut over the screen, the light through the teeth dies, black, and back
+const EAT = { snap: 0.45, lunge: 0.7, engulf: 1.0, shut: 1.13, dark0: 1.35, dark1: 2.6, reset: 3.1, back0: 3.6, back1: 4.5 };
+const ease = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u); };
+const easeIn = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * u; };
+const easeOut = (u) => { u = Math.min(1, Math.max(0, u)); return 1 - Math.pow(1 - u, 3); };
 function animate(M, dt) {
   const s = M.st, A = M.info.anim, o = M.own, split = !!M.meta.split;
   s.t += dt;
-  const t = s.t;
-  o.uBreath.value = A.breath * 0.012 * Math.sin(t * Math.PI * 2 * (A.breathHz ?? 0.32));
+  const t = s.t, eating = s.eat >= 0, E = s.eat;
+  const hz = A.breathHz ?? 0.32, ph = (t * hz) % 1;
+  s.breathCross = ph < s.breathPh; s.breathPh = ph;
+  o.uBreath.value = A.breath * 0.012 * Math.sin(t * Math.PI * 2 * hz) * (eating && E < EAT.snap ? 0.2 : 1);
   // the jaw: a slow working open and shut, a quiver, and now and then a long gape
   s.gapeT -= dt;
-  if (s.gapeT < 0) { s.gape = 1; s.gapeT = rr(3.5, 7); s.gapeHold = rr(0.8, 1.6); }
+  if (s.gapeT < 0 && !eating) { s.gape = 1; s.gapeT = rr(3.5, 7); s.gapeHold = rr(0.8, 1.6); snd.gape(M.id); }
   if (s.gape > 0) { s.gapeHold -= dt; if (s.gapeHold < 0) s.gape = Math.max(0, s.gape - dt * 1.4); }
   s.gapeV = (s.gapeV ?? 0) + ((s.gape > 0 && s.gapeHold > 0 ? 1 : s.gape) - (s.gapeV ?? 0)) * Math.min(1, dt * 5);
   let jaw = (split ? -0.1 : -0.12) + 0.08 * Math.sin(t * 0.9) + 0.012 * Math.sin(t * 37) + s.gapeV * A.jaw;
@@ -273,28 +276,82 @@ function animate(M, dt) {
   o.uHeadRot.value.set(s.head.x + tr * Math.sin(t * 41), s.head.y + tr * Math.sin(t * 33 + 1), s.head.z + tr * Math.sin(t * 29 + 2));
   o.uNeck.value.set(A.neck[0] * Math.sin(t * 0.55), A.neck[1] * Math.sin(t * 0.4 + 1));
   o.uSway.value = A.sway;
-  // the pounce: a short wind-up, a lunge to arm's length with the mouth wide, a tremble, then black
-  let dark = 0;
-  M.root.position.set(0, 0, 0); M.root.rotation.set(0, 0, 0);
-  if (s.lunge >= 0) {
-    s.lunge += dt;
-    const L = s.lunge, H0 = _h0.fromArray(M.meta.headPivot);
+  M.root.position.set(0, 0, 0); M.root.quaternion.identity();
+  s.camK = 0; s.shake = Math.max(0, s.shake - dt * 2.2);
+  let bite = 0, leak = 1, fade = 0;
+  if (eating) {
+    s.eat += dt;
+    const once = (k, f) => { if (!s.fired[k] && E >= EAT[k]) { s.fired[k] = 1; f(); } };
+    if (!s.fired.start) { s.fired.start = 1; snd.freeze(pounceKind); }
+    once('snap', () => { snd.pounce(pounceKind); buzz(90); s.shake = 0.5; });
+    once('engulf', () => { s.shake = Math.max(s.shake, 0.7); });
+    once('shut', () => { snd.bite(biteKind); buzz([260, 120, 90]); s.shake = 1.2; });
+    once('back0', () => snd.restore());
+    const max = split ? 0.55 : 0.85;   // how far the jaw (or the split face) opens at the lunge
+    const H0 = _h0.fromArray(M.meta.headPivot);
     const to = _to.copy(camera.position).sub(H0); const dist = to.length(); to.normalize();
-    const reach = Math.max(0, dist - 0.95); // stops with the teeth a hand's breadth from your face
-    // it turns to face you as it comes: yaw the whole body about its head
-    const yawTo = Math.atan2(to.x, to.z);
+    const reach = Math.max(0, dist - 0.85), yawTo = Math.atan2(to.x, to.z);
     let along = 0, turn = 0;
-    if (L < 0.22) { const u = L / 0.22; along = -0.12 * u; turn = 0.3 * u; jaw = -0.15; o.uHeadRot.value.y -= 0.25 * u; }
-    else if (L < 0.5) { const u = (L - 0.22) / 0.28, e = 1 - Math.pow(1 - u, 3); along = -0.12 + (reach + 0.12) * e; turn = 0.3 + 0.7 * e; jaw = 0.75 * e; }
-    else { along = reach + 0.015 * Math.sin(L * 70); turn = 1; jaw = 0.8 + 0.04 * Math.sin(L * 45); o.uHeadRot.value.z += 0.05 * Math.sin(L * 30); }
-    M.root.rotation.y = yawTo * turn;
+    if (E < EAT.snap) { // dead still, watching you, the mouth easing shut
+      const u = ease(E / EAT.snap); jaw = jaw * (1 - u) + (split ? -0.18 : -0.2) * u;
+      o.uHeadRot.value.multiplyScalar(1 - u); o.uHeadRot.value.y -= 0.12 * u; turn = 0.15 * u;
+    } else if (E < EAT.lunge) { // snaps round and comes, mouth tearing open
+      const u = (E - EAT.snap) / (EAT.lunge - EAT.snap), e = easeOut(u);
+      turn = 0.15 + 0.85 * easeOut(u * 1.6); along = reach * e; jaw = -0.2 + (max + 0.2) * easeOut(u * 1.3);
+      o.uHeadRot.value.set(0, 0.08 * Math.sin(E * 60) * (1 - u), 0.06 * Math.sin(E * 47));
+    } else if (E < EAT.shut) { // you are in its mouth; it closes
+      const u = (E - EAT.lunge) / (EAT.engulf - EAT.lunge);
+      turn = 1; along = reach + 0.25 * ease(u);
+      s.camK = easeIn(Math.min(1, u));
+      jaw = max + 0.03 * Math.sin(E * 50);
+      if (E > EAT.engulf) { const v = (E - EAT.engulf) / (EAT.shut - EAT.engulf); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * easeIn(v); bite = easeIn(v); }
+      o.uHeadRot.value.set(0, 0, 0.05 * Math.sin(E * 33));
+    } else { // shut: the light through the teeth fades out, and the dark comes
+      turn = 1; along = reach + 0.25; s.camK = 1; jaw = -M.meta.jawOpen * (split ? 0.95 : 0.9); bite = 1;
+      leak = 1 - ease((E - EAT.shut) / (EAT.dark1 - EAT.shut - 0.3));
+      fade = ease((E - EAT.dark0) / (EAT.dark1 - EAT.dark0));
+      o.uHeadRot.value.set(0, 0, 0);
+      if (E >= EAT.reset) { turn = 0; along = 0; s.camK = 0; bite = 0; jaw = -0.12; fade = 1 - ease((E - EAT.back0) / (EAT.back1 - EAT.back0)); }
+      if (E >= EAT.back1) { s.eat = -1; s.fired = {}; fade = 0; }
+    }
+    // aim the middle of the open mouth at you (not the nose), so you look down its throat as it comes
+    const half = split ? 0 : 0.5 * (M.meta.jawOpen + max) - 0.1;
+    _fz.fromArray(M.meta.headZ).multiplyScalar(Math.cos(half)).addScaledVector(_hy.fromArray(M.meta.headY), -Math.sin(half)).normalize();
+    _qa.setFromUnitVectors(_fz, to);
+    M.root.quaternion.identity().slerp(_qa, turn);
     const P = _p.copy(H0).addScaledVector(to, along);
-    M.root.position.copy(P).sub(_q.copy(H0).applyAxisAngle(_up, M.root.rotation.y));
-    if (L > 0.75) dark = Math.min(1, (L - 0.75) / 0.25);
-    if (L > 1.6) { s.lunge = -1; M.root.position.set(0, 0, 0); M.root.rotation.set(0, 0, 0); }
+    M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
   }
   o.uJaw.value = jaw;
-  $('fade').style.opacity = dark;
+  const dim = (1 - s.camK) * (1 - s.camK);
+  o.uEyeShine.value = (M.info.eyeShine ?? 1) * (0.012 + 0.988 * dim); o.uEyeSelf.value = (M.info.eyeSelf ?? 0) * (0.03 + 0.97 * dim);
+  grade.uniforms.uBite.value = bite; grade.uniforms.uLeak.value = leak; grade.uniforms.uBiteH.value = split ? 1 : 0;
+  $('fade').style.opacity = fade;
+  snd.ambient(M.id, dt, { cross: s.breathCross && !eating });
+}
+// where the throat is, in the world, for the moment you are inside the mouth
+const _m = new THREE.Vector3(), _a = new THREE.Vector3(), _hy = new THREE.Vector3(), _mat = new THREE.Matrix4(), _qm = new THREE.Quaternion();
+function headToWorld(M, l, out) {
+  const m = M.meta;
+  out.fromArray(m.headPivot).addScaledVector(_hx.fromArray(m.headX), l[0]).addScaledVector(_hy2.fromArray(m.headY), l[1]).addScaledVector(_hz.fromArray(m.headZ), l[2]);
+  return out.applyQuaternion(M.root.quaternion).add(M.root.position);
+}
+const _hx = new THREE.Vector3(), _hy2 = new THREE.Vector3(), _hz = new THREE.Vector3();
+function mouthPose(M) {
+  const m = M.meta, L = m.headL;
+  let loc, aim;
+  if (m.split) { loc = [0, -0.01, 0.42]; aim = [0, 0.005, 0.07]; } // between the halves, the third eye ahead
+  else {
+    const H = m.hingeLocal, th = m.jawOpen + M.own.uJaw.value, c = Math.cos(th), sn = Math.sin(th);
+    const dy = -0.095 - H[1], dz = 0.5 * L - H[2], J = [0, H[1] + dy * c - dz * sn, H[2] + dy * sn + dz * c];
+    const U = [0, -0.05, 0.5 * L], mid = [0, (U[1] + J[1]) / 2, (U[2] + J[2]) / 2];
+    aim = [0, H[1] + 0.01, H[2] - 0.03];
+    loc = [0, mid[1] + (mid[1] - aim[1]) * 0.25, mid[2] + (mid[2] - aim[2]) * 0.25];
+  }
+  headToWorld(M, loc, _m); headToWorld(M, aim, _a);
+  _hy.fromArray(m.headY).applyQuaternion(M.root.quaternion);
+  _mat.lookAt(_m, _a, _hy); _qm.setFromRotationMatrix(_mat);
+  return { pos: _m, quat: _qm };
 }
 
 // ---------------- camera: two framings, drag to circle around ----------------
@@ -311,6 +368,8 @@ function placeCamera() {
   camera.position.set(view.look.x + Math.sin(yaw) * Math.cos(pitch) * d, view.look.y + Math.sin(pitch) * d, view.look.z + Math.cos(yaw) * Math.cos(pitch) * d);
   camera.position.y = Math.max(0.25, camera.position.y);
   camera.lookAt(view.look);
+  if (cur && cur.st.camK > 0) { const mp = mouthPose(cur); camera.position.lerp(mp.pos, cur.st.camK); camera.quaternion.slerp(mp.quat, cur.st.camK); }
+  if (cur && cur.st.shake > 0) { const k = cur.st.shake * 0.02; camera.position.x += (Math.random() - 0.5) * k; camera.position.y += (Math.random() - 0.5) * k; camera.rotateZ((Math.random() - 0.5) * k * 2.5); }
 }
 const ptrs = new Map(); let pinch0 = 0, zoom0 = 1;
 stage.addEventListener('pointerdown', (e) => { stage.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY }); if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); zoom0 = view.zoom; } });
@@ -342,14 +401,15 @@ function placeLights(t) {
   const right = new THREE.Vector3().crossVectors(fwd, camera.up).normalize();
   // the trail camera sets its own exposure: the flash is as bright at the face as at the whole body
   let dSub = camera.position.distanceTo(view.look);
-  if (cur) { _hp.fromArray(cur.meta.headPivot).applyAxisAngle(_up, cur.root.rotation.y).add(cur.root.position); dSub = Math.max(0.5, Math.min(dSub, camera.position.distanceTo(_hp) - 0.3)); }
+  if (cur) { _hp.fromArray(cur.meta.headPivot).applyQuaternion(cur.root.quaternion).add(cur.root.position); dSub = Math.max(0.5, Math.min(dSub, camera.position.distanceTo(_hp) - 0.3)); dSub += (0.08 - dSub) * cur.st.camK; }
   flash.intensity = 5.2 * dSub * dSub;
   flash.position.copy(camera.position).addScaledVector(camera.up, 0.08);
   flash.target.position.copy(camera.position).addScaledVector(fwd, 5);
   // the lantern held low in the left hand, its flame flickering
   lantern.position.copy(camera.position).addScaledVector(right, -0.32).addScaledVector(camera.up, -0.42).addScaledVector(fwd, 0.25);
   lantern.target.position.copy(camera.position).addScaledVector(fwd, 5).addScaledVector(camera.up, -0.6);
-  lantern.intensity = 22 * Math.min(1, Math.max(0.3, (dSub * dSub) / 10)) * (0.9 + 0.06 * Math.sin(t * 13) + 0.04 * Math.sin(t * 29 + 1));
+  const ck = cur ? cur.st.camK : 0;
+  lantern.intensity = 22 * Math.min(1, Math.max(0.3 * (1 - ck) + 0.004 * ck, (dSub * dSub) / 10)) * (0.9 + 0.06 * Math.sin(t * 13) + 0.04 * Math.sin(t * 29 + 1));
   const lp = mode => (mode === 'ir' ? flash.position : lantern.position);
   if (cur) cur.own.uLightP.value.copy(lp(lightMode));
 }
@@ -361,10 +421,34 @@ const bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.95, 0.55, 0.9);
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 const grade = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uIR: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) } },
+  uniforms: { tDiffuse: { value: null }, uIR: { value: 1 }, uTime: { value: 0 }, uRes: { value: new THREE.Vector2(1, 1) }, uBite: { value: 0 }, uLeak: { value: 1 }, uBiteH: { value: 0 } },
   vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: `uniform sampler2D tDiffuse; uniform float uIR, uTime; uniform vec2 uRes; varying vec2 vUv;
+  fragmentShader: `uniform sampler2D tDiffuse; uniform float uIR, uTime, uBite, uLeak, uBiteH; uniform vec2 uRes; varying vec2 vUv;
     float h(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
+    float h1(float x) { return fract(sin(x * 127.1) * 43758.5453); }
+    // jaws closing over the screen from above and below (from the sides for the split head); teeth interlock,
+    // leaving slits of light that die out
+    vec3 biteOver(vec3 c) {
+      vec2 q = uBiteH > 0.5 ? vec2(vUv.y, vUv.x) : vUv;
+      float n = uBiteH > 0.5 ? 7.0 : 5.0, th = uBiteH > 0.5 ? 0.1 : 0.16, k = uBite;
+      float tx = q.x * n + 0.3, tb = tx + 0.5, it = floor(tx), ib = floor(tb);
+      float triT = 1.0 - abs(fract(tx) - 0.5) * 2.0, triB = 1.0 - abs(fract(tb) - 0.5) * 2.0;
+      float hT = th * (0.55 + 0.9 * h1(it + 3.0)), hB = th * (0.55 + 0.9 * h1(ib + 9.0));
+      triT = pow(triT, 0.8 + 0.8 * h1(it + 5.0)); triB = pow(triB, 0.8 + 0.8 * h1(ib + 7.0));
+      float baseT = mix(1.0 + th * 1.5, 0.5 + th * 0.12, k), baseB = mix(-th * 1.5, 0.5 - th * 0.12, k);
+      float topE = baseT - hT * pow(triT, 1.6), botE = baseB + hB * pow(triB, 1.6);
+      float w = 0.003 + 0.012 * (1.0 - k);
+      float inT = smoothstep(topE - w, topE + w, q.y), inB = 1.0 - smoothstep(botE - w, botE + w, q.y);
+      float toothT = inT * (1.0 - smoothstep(baseT - 0.01, baseT + 0.01, q.y)), toothB = inB * smoothstep(baseB - 0.01, baseB + 0.01, q.y);
+      float lit = 0.25 + 0.75 * uLeak;
+      vec3 gum = mix(vec3(0.05, 0.012, 0.01), vec3(0.03), uIR);
+      gum += mix(vec3(0.18, 0.05, 0.04), vec3(0.1), uIR) * (exp(-abs(q.y - baseT) * 40.0) * inT + exp(-abs(q.y - baseB) * 40.0) * inB) * lit * (1.0 - toothT - toothB);
+      vec3 tooth = mix(vec3(0.62, 0.56, 0.44), vec3(0.58), uIR) * lit * (0.55 + 0.45 * (1.0 - abs(fract(uBiteH > 0.5 ? tx : tx) - 0.5) * 2.0));
+      vec3 jawC = mix(gum, tooth, max(toothT, toothB));
+      vec3 light = mix(vec3(0.55, 0.42, 0.3), vec3(0.45), uIR) * uLeak;
+      vec3 gap = mix(c, light, smoothstep(0.8, 1.0, k));
+      return mix(gap, jawC, max(inT, inB));
+    }
     void main() {
       vec2 px = 1.0 / uRes;
       vec3 c = texture2D(tDiffuse, vUv).rgb;
@@ -372,6 +456,7 @@ const grade = new ShaderPass({
       c = mix(c, b, 0.55 * uIR);
       float l = dot(c, vec3(0.299, 0.587, 0.114));
       c = mix(c, vec3(pow(l, 1.12)), uIR);
+      if (uBite > 0.001) c = biteOver(c);
       vec2 q = (vUv - 0.5) * vec2(uRes.x / uRes.y, 1.0);
       c *= mix(0.3, 1.0, smoothstep(1.1, 0.25, length(q)));
       float g = h(floor(vUv * uRes / 1.5) + fract(uTime * 7.13) * 91.7) - 0.5;
@@ -391,7 +476,8 @@ async function setMonster(id) {
   $('tag').textContent = info.tag; $('title').textContent = info.title;
   $('pts').innerHTML = info.pts.map((p) => `<li>${p}</li>`).join('');
   const M = await loadMonster(id);
-  if (cur) scene.remove(cur.root);
+  if (cur) { scene.remove(cur.root); cur.root.position.set(0, 0, 0); cur.root.quaternion.identity(); }
+  grade.uniforms.uBite.value = 0; $('fade').style.opacity = 0; snd.restore();
   cur = M; scene.add(M.root); M.st = newState();
   setView(view.mode);
   $('loading').hidden = true;
@@ -400,8 +486,14 @@ $('mons').innerHTML = ORDER.map((id) => `<button class="chip" data-v="${id}">${I
 $('mons').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setMonster(b.dataset.v); });
 $('light').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setLight(b.dataset.v); });
 $('view').addEventListener('click', (e) => { const b = e.target.closest('button'); if (b) setView(b.dataset.v); });
-$('pounce').addEventListener('click', () => { if (!cur || cur.st.lunge >= 0) return; cur.st.lunge = 0; try { navigator.vibrate && navigator.vibrate([60, 40, 260]); } catch (e) { /* no vibration */ } });
-$('gape').addEventListener('click', () => { if (cur) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); } });
+$('pounce').addEventListener('click', () => { snd.unlock(); if (!cur || cur.st.eat >= 0) return; cur.st.eat = 0; cur.st.fired = {}; });
+$('gape').addEventListener('click', () => { snd.unlock(); if (cur && cur.st.eat < 0) { cur.st.gape = 1; cur.st.gapeHold = 1.6; cur.st.gapeT = rr(4, 7); snd.gape(cur.id); } });
+$('sound').addEventListener('click', () => { snd.setEnabled(!snd.enabled); snd.unlock(); $('sound').textContent = snd.enabled ? '소리 켜짐' : '소리 꺼짐'; $('sound').classList.toggle('on', snd.enabled); });
+$('pounceSel').innerHTML = Object.entries(POUNCE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+$('biteSel').innerHTML = Object.entries(BITE_KINDS).map(([k, v]) => `<option value="${k}">${v}</option>`).join('');
+$('pounceSel').addEventListener('change', (e) => { pounceKind = e.target.value; });
+$('biteSel').addEventListener('change', (e) => { biteKind = e.target.value; });
+window.addEventListener('pointerdown', () => snd.unlock(), { capture: true });
 
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
@@ -422,10 +514,11 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 resize(); setLight('ir');
-setMonster(new URLSearchParams(location.search).get('m') || 'm1').then(() => requestAnimationFrame(frame));
+setMonster(new URLSearchParams(location.search).get('m') || 'm3').then(() => requestAnimationFrame(frame));
 
 // for tests: freeze the clock, jump the motion, pick a moment of the pounce
 window.__mon = {
   setSpeed(s) { speed = s; }, get cur() { return cur; }, setMonster, setLight, setView,
+  setPounce(k) { pounceKind = k; }, setBite(k) { biteKind = k; }, snd,
   pose(o) { if (!cur) return; Object.assign(cur.st, o.st || {}); if (o.yaw !== undefined) view.yaw = o.yaw; if (o.pitch !== undefined) view.pitch = o.pitch; if (o.zoom !== undefined) view.zoom = o.zoom; },
 };
