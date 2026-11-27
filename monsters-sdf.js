@@ -640,4 +640,4 @@ export const MONSTERS = [
   ['m4', () => new Split()],
   ['m5', () => new Shadow()],
 ];
-export { MATS };
+export { MATS, tubeT };

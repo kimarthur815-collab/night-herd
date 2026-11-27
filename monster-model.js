@@ -25,10 +25,11 @@ vec3 bumpN(vec3 surf_pos, vec3 surf_norm, vec2 dHdxy, float faceDirection) {
   return normalize(abs(fDet) * surf_norm - vGrad);
 }`;
 const RIG_DECL = `
-attribute vec2 aAtt; attribute vec4 aMat; attribute vec4 aExt; attribute vec4 aRig;
+attribute vec2 aAtt; attribute vec4 aMat; attribute vec4 aExt; attribute vec4 aRig; attribute vec4 aLeg;
 uniform float uTime;
 uniform vec3 uHeadP, uHeadX, uHeadY, uHeadZ, uJawH, uHeadRot, uNeckP;
-uniform float uJaw, uSplit, uBreath, uSway, uStride, uStrideAmt, uHip, uZc; uniform vec2 uNeck;
+uniform float uJaw, uSplit, uBreath, uSway, uStride, uStrideAmt; uniform vec2 uNeck; uniform vec3 uLimbHip[4], uLimbKnee[4]; uniform float uLimbPh[4];
+mat3 rx(float a) { float c = cos(a), s = sin(a); return mat3(1.0, 0.0, 0.0, 0.0, c, s, 0.0, -s, c); }
 mat3 aa(vec3 k, float t) { float c = cos(t), s = sin(t), C = 1.0 - c;
   return mat3(c + k.x*k.x*C, k.y*k.x*C + k.z*s, k.z*k.x*C - k.y*s,  k.x*k.y*C - k.z*s, c + k.y*k.y*C, k.z*k.y*C + k.x*s,  k.x*k.z*C + k.y*s, k.y*k.z*C - k.x*s, c + k.z*k.z*C); }`;
 const RIG_MATS = `
@@ -44,15 +45,16 @@ const RIG_POS = `
     transformed += vec3(sin(uTime * 1.3 + position.y * 3.0 + ph), 0.0, cos(uTime * 1.07 + position.y * 2.5 + ph * 0.7)) * 0.035 * aRig.w * aRig.w * uSway; }
   transformed += normal * aExt.y * uBreath;`;
 
-// walking without leg bones: below the hips the body swings forward and back and lifts, the diagonal pairs together
-// (left front with right hind), the head and jaw left out
+// walking: each leg (the shadow's arms) swings on its hip and folds at the knee, baked into the monster (aLeg: limb number,
+// hip weight, knee weight); the diagonal pairs move together (left front with right hind)
 const STRIDE = `
-  if (uStrideAmt > 0.0) {
-    float w = clamp((uHip - position.y) / uHip, 0.0, 1.0); w = w * w * (1.0 - aRig.y) * (1.0 - aRig.x);
-    float side = tanh(position.x * 10.0), fore = tanh((position.z - uZc) * 6.0);
-    float ph = uStride + 3.14159 * 0.5 * (1.0 + side * fore);
-    transformed.z += sin(ph) * uStrideAmt * w;
-    transformed.y += max(0.0, cos(ph)) * uStrideAmt * 0.6 * w;
+  if (uStrideAmt > 0.0 && aLeg.x > 0.01) {
+    int li = int(floor(aLeg.x * 8.0 + 0.5)) - 1;
+    float ph = uStride + uLimbPh[li];
+    float swing = sin(ph) * uStrideAmt, lift = max(0.0, cos(ph)) * uStrideAmt * 1.4;
+    vec3 hp = uLimbHip[li], kn = uLimbKnee[li];
+    transformed = kn + rx(lift * aLeg.z) * (transformed - kn);
+    transformed = hp + rx(-swing * aLeg.y) * (transformed - hp);
   }`;
 function monsterMaterial(info, uTime) {
   const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.8, metalness: 0 });
@@ -63,7 +65,7 @@ function monsterMaterial(info, uTime) {
     uJaw: { value: 0 }, uSplit: { value: 0 }, uBreath: { value: 0 }, uSway: { value: 1 },
     uSkin: { value: new THREE.Color(...info.skin) }, uWr: { value: new THREE.Vector3(...info.wr).normalize() }, uSmoke: { value: info.smoke ?? 0 },
     uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() }, uAppear: { value: 1 },
-    uStride: { value: 0 }, uStrideAmt: { value: 0 }, uHip: { value: 0.6 }, uZc: { value: 0 },
+    uStride: { value: 0 }, uStrideAmt: { value: 0 }, uLimbHip: { value: [0, 1, 2, 3].map(() => new THREE.Vector3()) }, uLimbKnee: { value: [0, 1, 2, 3].map(() => new THREE.Vector3()) }, uLimbPh: { value: [0, 0, 0, 0] },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
@@ -122,7 +124,7 @@ function monsterMaterial(info, uTime) {
           float shine = min(5.0, uEyeGain * pow(fc, 4.0) / pow(max(dl, 1.3), 1.5)) * uEyeShine;
           totalEmissiveRadiance += vExt.x * vec3(0.96, 1.0, 0.9) * (shine + uEyeSelf * (0.4 + 0.6 * fc)); }`);
   };
-  m.customProgramCacheKey = () => 'game-monster-v3';
+  m.customProgramCacheKey = () => 'game-monster-v4';
   return { mat: m, own };
 }
 function parse(j) {
@@ -136,7 +138,8 @@ function parse(j) {
   const att = new Uint8Array(buf, o, vc * 2); o += vc * 2;
   const mat = new Uint8Array(buf, o, vc * 4); o += vc * 4;
   const ext = new Uint8Array(buf, o, vc * 4); o += vc * 4;
-  const rig = new Uint8Array(buf, o, vc * 4);
+  const rig = new Uint8Array(buf, o, vc * 4); o += vc * 4;
+  const leg = j.leg ? new Uint8Array(buf, o, vc * 4) : new Uint8Array(vc * 4); // baked limbs (older bakes have none)
   const pos = new Float32Array(vc * 3); for (let i = 0; i < vc * 3; i++) pos[i] = p16[i] * j.ps;
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
@@ -145,6 +148,7 @@ function parse(j) {
   g.setAttribute('aMat', new THREE.BufferAttribute(new Uint8Array(mat), 4, true));
   g.setAttribute('aExt', new THREE.BufferAttribute(new Uint8Array(ext), 4, true));
   g.setAttribute('aRig', new THREE.BufferAttribute(new Uint8Array(rig), 4, true));
+  g.setAttribute('aLeg', new THREE.BufferAttribute(new Uint8Array(leg), 4, true));
   g.setIndex(new THREE.BufferAttribute(j.i32 ? new Uint32Array(idx) : new Uint16Array(idx), 1));
   g.computeBoundingSphere(); g.boundingSphere.radius += 0.6;
   return g;
@@ -158,7 +162,7 @@ export async function loadMonster(url, id, uTime) {
   if (meta.split) { own.uSplit.value = 1; own.uJawH.value.fromArray(meta.headPivot).addScaledVector(own.uHeadZ.value, meta.split.hinge[2]); }
   else own.uJawH.value.fromArray(meta.jawHinge);
   own.uNeckP.value.fromArray(meta.neck ? meta.neck.base : [0, 1.5, -0.05]);
-  own.uHip.value = meta.height * 0.5; own.uZc.value = 0.5 * (meta.bounds[0][2] + meta.bounds[1][2]);
+  (meta.limbs || []).slice(0, 4).forEach((L, i) => { own.uLimbHip.value[i].fromArray(L.hip); own.uLimbKnee.value[i].fromArray(L.knee); own.uLimbPh.value[i] = L.arm ? (L.side > 0 ? Math.PI : 0) : (L.side * L.fore > 0 ? Math.PI : 0); });
   const root = new THREE.Group(); root.add(mesh); root.visible = false;
   return { id, meta, info, mesh, root, own };
 }
