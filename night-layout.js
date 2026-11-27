@@ -34,13 +34,16 @@ export const NL = {
   walk: { speed: 1.4, turn: 0.6 }, // 임시: walking to the next place: m/s, and how far you turn toward where you walk (radians)
   hint: { idle: 12, misses: 3 }, // 임시: say the how-to line again after this many seconds doing nothing, or this many taps on nothing
   matches: 1, // 성냥: 랜턴이 꺼지면 한 번 다시 켤 수 있다 (사용자). 채우는 곳은 마을 상점 (아직 없음)
+  // 임시: phone gestures: a swipe counts after this share of the screen's short side, and when it goes this many times more one
+  // way than the other; a tap that misses every cow takes the nearest one within this share of the short side
+  swipe: { far: 0.08, ratio: 1.2, reach: 0.07 },
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")
   endWait: 3.5, // 임시: seconds after the last place is counted before the night fades out (stage 1 ends there)
   lines: { // the cowboy's lines; the brackets are the how-to
     open: '열한 마리. 더도 말고 덜도 말고.', // 기획서 임시 대사
     count: '하나씩 세자 (소를 톡)', // 기획서 예시
     countPC: '하나씩 세자 (소를 보고 클릭)', // 임시
-    next: '다음 줄로 가자 (화면을 왼쪽으로 넘기기)', // 임시
+    next: '다음 줄로 가자 (화면을 옆으로 넘기기)', // 임시
     nextPC: '다음 줄로 가자 (D나 →)', // 임시
     match: '성냥을 켜자 (왼쪽을 위로 쓸기)', // 임시: the first time the lantern goes out
     matchPC: '성냥을 켜자 (F)', // 임시

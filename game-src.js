@@ -1211,7 +1211,7 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch {}
 });
 canvas.addEventListener('pointermove', (e) => {
-  if (NIGHT_SCENE && TOUCH) return;
+  if (NIGHT_SCENE && TOUCH) { gestureMove(e); return; }
   if (e.pointerId === joy.id) {
     let dx = e.clientX - joy.cx, dy = e.clientY - joy.cy; const r = Math.hypot(dx, dy), R = 56;
     if (r > R) { dx *= R / r; dy *= R / r; }
@@ -1230,6 +1230,7 @@ const endPointer = (e) => {
   if (e.pointerId === look.id) look.id = null;
 };
 canvas.addEventListener('pointerup', endPointer); canvas.addEventListener('pointercancel', endPointer);
+if (NIGHT_SCENE) canvas.addEventListener('lostpointercapture', endPointer);
 addEventListener('keydown', (e) => {
   if (!started) return;
   if (NIGHT_SCENE) {
@@ -1550,7 +1551,7 @@ function makeNightHerd(geos) {
   });
 }
 // a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, lantern lit or not
-function nightTap(nx, ny) {
+function nightTap(nx, ny, finger) {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
   tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
@@ -1561,11 +1562,22 @@ function nightTap(nx, ny) {
     for (const b of c.blockers) { const t = raySphere(tapO, tapD, tapC.set(b.x, c.y0 + 0.95 * c.s, b.z), 0.38 * c.s); if (t < best) { best = t; hit = c; } }
     for (const [k, rr] of [[0, 0.15], [0.5, 0.15], [1, 0.14]]) { const t = raySphere(tapO, tapD, tapC.copy(c.eyeWorld).lerp(c.noseWorld, k), rr * c.s); if (t < best) { best = t; hit = c; } } // between the eyes, mid-face, nose
   }
-  if (!hit || best > 30) { if (++night.misses >= NL.hint.misses) { night.misses = 0; hintCount(); } return; } // tapping at nothing: say how again
+  if ((!hit || best > 30) && finger) hit = nearOnScreen(nx, ny); // a finger is wide: the cow nearest the tap, if it is close
+  if (!hit || best > 30 && !finger) { if (++night.misses >= NL.hint.misses) { night.misses = 0; hintCount(); } return; } // tapping at nothing: say how again
   night.misses = 0; night.lastAct = performance.now();
   if (hit.counted) return; // 임시: one already counted is not counted again (counting works with the lantern out too, 사용자 2026-11-28)
   hit.counted = true; count++;
   if (count <= NL.told) say(`${NUM[count - 1]}…`, NL.saySecs); else say(`…${NUM[count - 1]}.`, 3.0);
+}
+const _np = new THREE.Vector3();
+function nearOnScreen(nx, ny) {
+  const W = innerWidth, H = innerHeight, reach = Math.min(W, H) * NL.swipe.reach;
+  let best = reach, hit = null;
+  for (const c of cows) for (const p of [c.eyeWorld, c.noseWorld, _np.set(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z)]) {
+    const v = tapC.copy(p).project(camera); if (v.z > 1) continue;
+    const d = Math.hypot((v.x - nx) * W / 2, (v.y - ny) * H / 2); if (d < best) { best = d; hit = c; }
+  }
+  return hit;
 }
 function nextStation() {
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
@@ -1640,12 +1652,22 @@ const gest = new Map();
 function gestureDown(e) { gest.set(e.pointerId, { x: e.clientX, y: e.clientY, t: performance.now() }); try { canvas.setPointerCapture(e.pointerId); } catch {} }
 function gestureUp(e) {
   const g = gest.get(e.pointerId); gest.delete(e.pointerId);
-  if (!g || e.type === 'pointercancel' || !started || paused || ended) return;
-  const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y, far = Math.min(W, H) * 0.12;
-  if (Math.hypot(dx, dy) < 14 && (DEBUG || performance.now() - g.t < 600)) { nightTap((e.clientX / W) * 2 - 1, 1 - (e.clientY / H) * 2); return; }
-  if (Math.abs(dx) > far && Math.abs(dx) > 1.4 * Math.abs(dy)) { if (dx < 0) nextStation(); return; }
-  if (Math.abs(dy) > far && Math.abs(dy) > 1.4 * Math.abs(dx) && g.x < W * 0.45) {
-    night.lastAct = performance.now();
+  if (!g || g.done || !started || paused || ended) return;
+  const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y;
+  if (e.type !== 'pointercancel' && Math.hypot(dx, dy) < 18 && (DEBUG || performance.now() - g.t < 700)) { nightTap((e.clientX / W) * 2 - 1, 1 - (e.clientY / H) * 2, true); return; }
+  gestureSwipe(g, dx, dy); // a swipe the browser cut short still counts if it went far enough
+}
+// a swipe acts as soon as the finger has gone far enough, without waiting for it to lift
+function gestureMove(e) {
+  const g = gest.get(e.pointerId);
+  if (!g || g.done || !started || paused || ended) return;
+  gestureSwipe(g, e.clientX - g.x, e.clientY - g.y);
+}
+function gestureSwipe(g, dx, dy) {
+  const W = innerWidth, far = Math.min(W, innerHeight) * NL.swipe.far;
+  if (Math.abs(dx) > far && Math.abs(dx) > NL.swipe.ratio * Math.abs(dy)) { g.done = true; nextStation(); return; } // either way: there is no going back
+  if (Math.abs(dy) > far && Math.abs(dy) > NL.swipe.ratio * Math.abs(dx) && g.x < W * 0.5) {
+    g.done = true; night.lastAct = performance.now();
     if (dy < 0) { if (lamp.mode === 'off') lampAction(); else if (lamp.mode === 'on') raiseTouch = true; } // up: light it, or hold it up
     else if (raiseTouch) raiseTouch = false; else if (lamp.mode === 'on') lampAction(); // down: lower it, or put it out
   }
