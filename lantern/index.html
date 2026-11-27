@@ -69,7 +69,7 @@ body.portrait #turn{display:block}
   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><g class="in"><path d="M4 9V4h5"/><path d="M20 9V4h-5"/><path d="M4 15v5h5"/><path d="M20 15v5h-5"/></g><g class="out"><path d="M9 4v5H4"/><path d="M15 4v5h5"/><path d="M9 20v-5H4"/><path d="M15 20v-5h5"/></g></svg>
 </button>
 <p id="turn">가로로 돌리면 더 넓게 보여요</p>
-<p id="hint">랜턴은 왼손, 리볼버는 오른손이에요. 공이치기를 젖혀야 쏠 수 있고, 탄은 다섯 발뿐이에요</p>
+<p id="hint">랜턴은 왼손, 리볼버는 오른손이에요. 공이치기를 젖혀야 쏠 수 있어요. 탄은 다섯 발, R이나 장전 버튼으로 한 발씩 채워요</p>
 <p id="prompt" aria-live="polite"></p>
 <p id="sub" aria-live="polite"></p>
 <div class="pad left">
@@ -83,6 +83,9 @@ body.portrait #turn{display:block}
 <div class="pad">
   <button id="cockBtn" class="btn" type="button" aria-label="공이치기 젖히기">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M7 17a7 7 0 1 1 10 0"/><path d="M17 17v-4h-4"/></svg><span>공이치기</span>
+  </button>
+  <button id="reloadBtn" class="btn" type="button" aria-label="장전">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="8" r="1.6"/><circle cx="15.5" cy="10" r="1.6"/><circle cx="15.5" cy="14" r="1.6"/><circle cx="12" cy="16" r="1.6"/><circle cx="8.5" cy="14" r="1.6"/><circle cx="8.5" cy="10" r="1.6"/></svg><span>장전</span>
   </button>
   <button id="fireBtn" class="btn" type="button" aria-label="쏘기">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg><span>쏘기</span>

@@ -32,10 +32,10 @@ function dome(top, mid, bottom, blobs) {
   return s;
 }
 // three environments to light a gun with: a dark studio with softboxes, the desert by day, night by a lantern held to the left
-export function makeRevolverEnvironments(renderer) {
+export function makeRevolverEnvironments(renderer, only = ['studio', 'day', 'night']) {
   const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = {
-  studio: pmrem.fromScene(dome('#29292d', '#1a1a1d', '#0f0f11', [
+  const make = {
+  studio: () => pmrem.fromScene(dome('#29292d', '#1a1a1d', '#0f0f11', [
     { box: [7, 3.5], p: [0, 7.5, 1.5], c: [4.6, 4.6, 4.7] }, // overhead softbox
     { box: [1.2, 7], p: [-7, 1, 3], c: [5.5, 5.4, 5.2] }, // tall strip to the left
     { box: [0.8, 7], p: [7, 0.5, -2], c: [3.2, 3.4, 3.8] }, // cool rim strip behind, right
@@ -43,16 +43,18 @@ export function makeRevolverEnvironments(renderer) {
     { box: [3, 7], p: [6, 1, 5], c: [1.9, 1.9, 1.9] }, // diffuser front right
     { box: [8, 1.5], p: [0, -6, 4], c: [0.4, 0.38, 0.35] }, // the table, faintly
   ]), 0.02).texture,
-  day: pmrem.fromScene(dome('#3d6aae', '#ead9ba', '#8c6a46', [
+  day: () => pmrem.fromScene(dome('#3d6aae', '#ead9ba', '#8c6a46', [
     { p: [4.2, 6.4, 3.4], r: 0.42, c: [70, 58, 42] }, // the sun
     { p: [0, -7, 2], r: 3.5, c: [0.9, 0.72, 0.5], s: [1.6, 0.3, 1.6] }, // bright sand in front
   ]), 0.02).texture,
-  night: pmrem.fromScene(dome('#05070d', '#0c0a09', '#050403', [
+  night: () => pmrem.fromScene(dome('#05070d', '#0c0a09', '#050403', [
     { p: [-3.4, -1.0, 3.2], r: 0.5, c: [30, 13.5, 4] }, // the lantern in the left hand
     { p: [1.8, -2.6, -6], r: 1.5, c: [1.5, 0.5, 0.13] }, // the campfire, further off
     { p: [2.5, 6.5, -4], r: 0.22, c: [3.2, 3.4, 3.8] }, // moon
   ]), 0.015).texture,
 };
+  const env = {};
+  for (const k of only) env[k] = make[k]();
   pmrem.dispose();
   return env;
 }
@@ -305,16 +307,27 @@ export function reloadRevolver(r, on = {}, opts = {}) {
     if (r.gate) r.gate.rotation.z = 0;
     return true;
   }
-  const t0 = s.top, ch = s.chambers.slice(), E = (t0 + 1) % 6, steps = [{ k: 'half' }, { k: 'open' }];
-  for (let i = 1; i <= 6; i++) {
-    const c = (t0 + i - 1) % 6; // the chamber at the gate after i clicks
-    steps.push({ k: 'turn' });
-    if (ch[c] === 'spent' || (c === E && ch[c] !== 'empty')) { steps.push({ k: 'eject', c }); ch[c] = 'empty'; }
+  // the chambers in the order they come round to the gate, starting with the one there now (one click past the hammer)
+  const t0 = s.top, ch = s.chambers.slice(), order = [0, 1, 2, 3, 4, 5].map((j) => (t0 + 5 + j) % 6);
+  // the chamber the hammer will rest on: one already empty if there is one, else a fired one. All six loaded: nothing to do
+  const E = order.find((k) => ch[k] === 'empty') ?? order.find((k) => ch[k] === 'spent');
+  if (E === undefined) return false;
+  const work = (k) => ch[k] === 'spent' || (k !== E && ch[k] === 'empty');
+  if (!order.some(work)) return false; // five loaded, the hammer's chamber empty: already full
+  // click on until every chamber that needs it has been to the gate, and then until the last cocking will bring E under the hammer
+  let last = 0; order.forEach((k, j) => { if (work(k)) last = j; });
+  let n = last; while ((t0 + n + 1) % 6 !== E) n++;
+  const steps = [{ k: 'half' }, { k: 'open' }];
+  for (let j = 0; j <= n; j++) {
+    if (j > 0) steps.push({ k: 'turn' });
+    const c = (t0 + 5 + j) % 6;
+    if (j > 5) continue;
+    if (ch[c] === 'spent') { steps.push({ k: 'eject', c }); ch[c] = 'empty'; }
     if (c !== E && ch[c] === 'empty') { steps.push({ k: 'insert', c }); ch[c] = 'live'; }
   }
   steps.push({ k: 'close' }, { k: 'cock' }, { k: 'lower' });
+  s.anim = { type: 'reload', steps, i: -1, t: 0, ham0: s.cocked ? 1 : 0 }; // from wherever the hammer is now
   s.cocked = false;
-  s.anim = { type: 'reload', steps, i: -1, t: 0 };
   return true;
 }
 const STEP_T = { half: 0.3, open: 0.3, turn: 0.22, eject: 0.6, insert: 0.5, close: 0.28, cock: 0.34, lower: 0.5 };
@@ -358,7 +371,7 @@ function stepReload(r, a, dt, on) {
   const u = Math.min(1, a.t / STEP_T[st.k]), e = ease(u);
   let ham = 0.3, trig = 0.5, gate = 1, cylA = s.top;
   switch (st.k) {
-    case 'half': ham = 0.3 * e; trig = 1 - 0.5 * e; gate = 0; break;
+    case 'half': ham = a.ham0 + (0.3 - a.ham0) * e; trig = (a.ham0 ? 0 : 1) + ((a.ham0 ? 0 : 1) - 0.5) * -e; gate = 0; break;
     case 'open': gate = e; break;
     case 'turn': cylA = a.from + sstep(0, 0.8, u); if (!a.c && u > 0.8) { a.c = 1; on.click?.(0.18, 4200); } break;
     case 'eject': { // push the rod, the case slides out the back with it, then the rod springs home

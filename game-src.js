@@ -10,7 +10,8 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { fbm } from './cow.js';
-import { makeRevolver, CYL_AXIS_Y, MUZZLE_Z } from './revolver.js';
+import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, updateRevolver, reloadRevolver } from './revolver-model.js';
+import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 
 const DEBUG = location.hash === '#debug';
@@ -52,7 +53,7 @@ const NUM = ['하나', '둘', '셋', '넷', '다섯', '여섯', '일곱', '여�
 const ui = {
   start: $('start'), startBtn: $('startBtn'), loadTxt: $('loadTxt'), sub: $('sub'), joy: $('joy'), knob: $('knob'),
   fps: $('fps'), hint: $('hint'), resume: $('resume'), prompt: $('prompt'), lampBtn: $('lampBtn'), raiseBtn: $('raiseBtn'),
-  end: $('end'), again: $('again'), fsBtn: $('fsBtn'), cockBtn: $('cockBtn'), fireBtn: $('fireBtn'),
+  end: $('end'), again: $('again'), fsBtn: $('fsBtn'), cockBtn: $('cockBtn'), fireBtn: $('fireBtn'), reloadBtn: $('reloadBtn'),
 };
 let renderer;
 try {
@@ -937,10 +938,21 @@ async function loadHand() {
   handPivot.add(new THREE.Mesh(parseHand(j, MX < 0), handMaterial()));
 }
 // ---------------- the revolver in the right hand ----------------
-// temporary: five rounds and no reloading yet; right click (or E) draws the hammer back, left click fires
+// the Colt Peacemaker 7½″ (revolver-model.js): five rounds, the hammer down on the empty sixth. Right click (or E) draws
+// the hammer back, left click fires; R (or the reload button, both temporary) reloads through the gate a round at a time
 const gunPivot = new THREE.Group(); gunPivot.scale.setScalar(VM_SCALE);
-const gun = { chambers: [false, true, true, true, true, true], top: 0, from: 0, mode: 'idle', t: 0, kick: 9, thumb: 0, aim: 0, shots: 0 };
-let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null;
+const gun = { t: 0, kick: 9, thumb: 0, aim: 0, shots: 0, reload: 0 };
+let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null, gunEnvMats = [];
+let MUZZLE_Z = -0.2311;
+const gunSnd = makeRevolverSound(() => sound.ctx || null, () => sound.master);
+const gunOn = { click: (g, f) => gunSnd.click(g, f), shot: () => shoot(), dry: () => sound.dry(), slide: () => gunSnd.slide(), drop: () => gunSnd.drop(GAME_DROP), insert: () => gunSnd.insert() };
+// held for reloading (temporary): brought in low and rolled left in the hand, so the loading gate faces up at you
+const RELOAD_HOLD = new THREE.Vector3(0.02, -0.12, -0.28), RELOAD_Q = new THREE.Quaternion().setFromRotationMatrix((() => {
+  // the right side (and the gate) up and a little toward you, the muzzle across to the left, the grip to the right in the hand
+  const x = new THREE.Vector3(0, 0.97, 0.25).normalize(), z = new THREE.Vector3(0.8, -0.1, 0.6); // the gun's right side, its back
+  z.addScaledVector(x, -z.dot(x)).normalize();
+  return new THREE.Matrix4().makeBasis(x, new THREE.Vector3().crossVectors(z, x), z);
+})());
 const GUN_TURN = { yaw: 0.5, roll: 0.18, aimD: 5 };
 const GUN_HOLD = new THREE.Vector3(0.14, -0.11, -0.29), _gm = new THREE.Matrix4(), _ga = new THREE.Vector3(), _gq = new THREE.Quaternion(), _gup = new THREE.Vector3(0, 1, 0);
 function glowTexture(spikes) {
@@ -952,8 +964,6 @@ function glowTexture(spikes) {
   return new THREE.CanvasTexture(c);
 }
 function makeGun() {
-  rev = makeRevolver();
-  gunPivot.add(rev.group);
   vmScene.add(gunPivot);
   flashV = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(true), color: new THREE.Color(1.0, 0.8, 0.5), blending: THREE.AdditiveBlending, transparent: true, depthWrite: false, fog: false }));
   flashV.position.set(0, 0, MUZZLE_Z - 0.035); flashV.scale.setScalar(0.16); flashV.visible = false; flashV.renderOrder = 5;
@@ -963,45 +973,32 @@ function makeGun() {
   armR = makeArmRig(GARM, gunPivot);
 }
 async function loadGunHand() {
-  const [h, t] = await Promise.all(['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(f)).json()));
+  const [h, t, r] = await Promise.all([...['gunhand.json', 'gunthumb.json'].map(async (f) => (await fetch(f)).json()), loadRevolver('revolver/colt75.json')]);
+  rev = r; gunPivot.add(rev.group); MUZZLE_Z = rev.muzzle.z; flashV.position.z = MUZZLE_Z - 0.035;
+  // polished steel shows what it reflects: the night, and the lantern held off to the left
+  const env = makeRevolverEnvironments(renderer, ['night']).night, mats = new Set();
+  rev.group.traverse((o) => { if (o.material) mats.add(o.material); });
+  for (const m of mats) { m.envMap = env; m.needsUpdate = true; }
+  gunEnvMats = [...mats];
   const mat = handMaterial();
   gunPivot.add(new THREE.Mesh(parseHand(h, false), mat));
   thumbPivot = new THREE.Group(); thumbPivot.position.fromArray(t.origin); gunPivot.add(thumbPivot);
   thumbPivot.add(new THREE.Mesh(parseHand(t, false), mat));
 }
-function cockGun() {
-  if (!started || !GUN || gun.mode !== 'idle') return;
-  gun.mode = 'cocking'; gun.t = 0; gun.from = gun.top; gun.top = (gun.top + 1) % 6;
-  sound.cock();
-}
-function fireGun() {
-  if (!started || !GUN) return;
-  if (gun.mode !== 'cocked') return;
-  gun.mode = 'firing'; gun.t = 0;
-  if (gun.chambers[gun.top]) { gun.chambers[gun.top] = false; rev.bullets[gun.top].visible = false; shoot(); }
-  else sound.dry();
-}
+function cockGun() { if (started && GUN && rev && cockRevolver(rev, gunOn)) gun.t = 0; }
+function fireGun() { if (started && GUN && rev && rev.state.cocked && fireRevolver(rev, gunOn)) gun.t = 0; } // only once the hammer is back
+function reloadGun() { if (started && GUN && rev && reloadRevolver(rev, gunOn)) gun.t = 0; }
 const kickAt = (t) => (t < 0.025 ? t / 0.025 : Math.exp(-(t - 0.025) / 0.11) * (1 + 0.15 * Math.sin((t - 0.025) * 30) * Math.exp(-(t - 0.025) / 0.05)));
 function gunStep(dt, time) {
+  if (!rev) return;
   gun.t += dt; gun.kick += dt;
-  let cock = 0, trig = 0, cyl = -gun.top * (Math.PI / 3);
-  if (gun.mode === 'cocking') {
-    cock = smooth(clamp((gun.t - 0.07) / 0.2, 0, 1));
-    const turn = smooth(clamp((gun.t - 0.1) / 0.16, 0, 1));
-    cyl = -(gun.from + turn) * (Math.PI / 3);
-    if (gun.t > 0.3) { gun.mode = 'cocked'; gun.t = 0; }
-  } else if (gun.mode === 'cocked') { cock = 1; trig = 0.35; }
-  else if (gun.mode === 'firing') {
-    cock = 1 - clamp(gun.t / 0.02, 0, 1);
-    trig = gun.t < 0.12 ? 1 : 1 - smooth(clamp((gun.t - 0.12) / 0.15, 0, 1));
-    if (gun.t > 0.3) { gun.mode = 'idle'; gun.t = 0; }
-  }
+  updateRevolver(rev, dt, gunOn); // hammer, trigger, cylinder, gate, ejector, cases
+  const a = rev.state.anim, cocking = a?.type === 'cock';
   // the thumb reaches up onto the spur while cocking, then comes back down
-  gun.thumb = damp(gun.thumb, gun.mode === 'cocking' && gun.t < 0.27 ? 1 : 0, gun.mode === 'cocking' ? 22 : 9, dt);
-  gun.aim = damp(gun.aim, gun.mode === 'idle' && gun.t > 2.5 ? 0 : 1, 4, dt); // a little lower when you aren't about to shoot
-  rev.hamPivot.rotation.x = 0.8 * cock;
-  rev.trigPivot.rotation.x = 0.22 * trig;
-  rev.cyl.rotation.z = cyl;
+  gun.thumb = damp(gun.thumb, cocking && a.t < 0.27 ? 1 : 0, cocking ? 22 : 9, dt);
+  gun.aim = damp(gun.aim, !a && !rev.state.cocked && gun.t > 2.5 ? 0 : 1, 4, dt); // a little lower when you aren't about to shoot
+  gun.reload = damp(gun.reload, a?.type === 'reload' ? 1 : 0, 6, dt);
+  for (const m of gunEnvMats) m.envMapIntensity = 0.12 + 0.88 * vmFlame.intensity; // the reflections go with the lantern
   if (thumbPivot) thumbPivot.rotation.set(0.55 * gun.thumb, -0.25 * gun.thumb, 0.35 * gun.thumb);
   // where it points: the middle of the view, a little below it at ease
   const k = kickAt(gun.kick);
@@ -1015,6 +1012,7 @@ function gunStep(dt, time) {
   // turned in a little and canted, so you see the side of it: the cylinder and the hammer
   gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(0.42 * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
   gunPivot.position.copy(p);
+  if (gun.reload > 0.001) { const rb = gun.reload * gun.reload * (3 - 2 * gun.reload); gunPivot.position.lerp(RELOAD_HOLD, rb); gunPivot.quaternion.slerp(RELOAD_Q, rb); }
   gunPivot.updateMatrixWorld(true);
   solveArm(armR); placeArm(armR);
   // the muzzle flash lights the hands, then the world, for a moment
@@ -1030,7 +1028,7 @@ const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _rc = new THREE.Vect
 function raySphere(o, d, c, r) { const ox = o.x - c.x, oy = o.y - c.y, oz = o.z - c.z, b = ox * d.x + oy * d.y + oz * d.z, cc = ox * ox + oy * oy + oz * oz - r * r, h = b * b - cc; if (h < 0) return Infinity; const t = -b - Math.sqrt(h); return t > 0 ? t : Infinity; }
 function shoot() {
   gun.kick = 0; gun.shots++;
-  sound.gunshot();
+  gunSnd.bang(GAME_SHOT);
   _ro.copy(camera.position);
   _rd.copy(fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
   let best = Infinity, hit = null;
@@ -1209,6 +1207,7 @@ addEventListener('keydown', (e) => {
   if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
   if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
   if (GUN && e.code === 'KeyE' && !e.repeat) { cockGun(); return; }
+  if (GUN && e.code === 'KeyR' && !e.repeat) { reloadGun(); return; }
   keys.add(e.code);
   if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space'].includes(e.code)) e.preventDefault();
 });
@@ -1361,7 +1360,7 @@ function updateLampUI() {
 if (ui.lampBtn) ui.lampBtn.addEventListener('click', (e) => { e.stopPropagation(); lampAction(); });
 const raiseDown = (e) => { e.preventDefault(); e.stopPropagation(); raiseTouch = true; };
 const raiseUp = (e) => { e.stopPropagation(); raiseTouch = false; };
-for (const [b, fn] of [[ui.cockBtn, cockGun], [ui.fireBtn, fireGun]]) if (b) b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
+for (const [b, fn] of [[ui.cockBtn, cockGun], [ui.fireBtn, fireGun], [ui.reloadBtn, reloadGun]]) if (b) b.addEventListener('pointerdown', (e) => { e.stopPropagation(); e.preventDefault(); fn(); });
 if (ui.raiseBtn) {
   ui.raiseBtn.addEventListener('pointerdown', raiseDown);
   ui.raiseBtn.addEventListener('pointerup', raiseUp); ui.raiseBtn.addEventListener('pointercancel', raiseUp); ui.raiseBtn.addEventListener('pointerleave', raiseUp);
@@ -2030,7 +2029,8 @@ if (DEBUG) {
     gunHold: (x, y, z, yaw, roll) => { GUN_HOLD.set(x, y, z); if (yaw !== undefined) { GUN_TURN.yaw = yaw; GUN_TURN.roll = roll; } },
     hideWorld: (on) => { scene.visible = !on; },
     vmOrbit: (yaw, pitch, dist) => { dbgOrbit = yaw === undefined ? null : { yaw, pitch, dist }; if (!dbgOrbit) { vmCamera.position.set(0, 0, 0); vmCamera.quaternion.identity(); } },
-    gun: () => ({ mode: gun.mode, top: gun.top, chambers: gun.chambers.slice(), dead: cows.filter((c) => c.dead).length, startled: cows.filter((c) => c.startle > 0.05).length }),
+    reload: () => reloadGun(),
+    gun: () => ({ anim: rev?.state.anim?.type || null, step: rev?.state.anim?.steps?.[rev.state.anim.i]?.k, cocked: rev?.state.cocked, top: rev?.state.top, chambers: rev?.state.chambers.slice(), dead: cows.filter((c) => c.dead).length, startled: cows.filter((c) => c.startle > 0.05).length }),
     aimAt: (i) => { const c = cows[i]; const dx = c.blockers[1].x - player.pos.x, dz = c.blockers[1].z - player.pos.z; player.yaw = Math.atan2(-dx, -dz); player.pitch = Math.atan2(0.95 * c.s - EYE_H, Math.hypot(dx, dz)); },
     plantsNear: (f) => { const F = [saguaroField, ...brushFields][f]; return F ? F.items.map((it) => { const x = it.x + Math.round((player.pos.x - it.x) / PLANT_PER) * PLANT_PER, z = it.z + Math.round((player.pos.z - it.z) / PLANT_PER) * PLANT_PER;
       return { v: it.v, x: +x.toFixed(2), z: +z.toFixed(2), d: +Math.hypot(x - player.pos.x, z - player.pos.z).toFixed(1), H: +it.H.toFixed(2) }; }).sort((a, b) => a.d - b.d) : []; },

@@ -16,8 +16,9 @@
     "copy:plants": "for d in slice lantern walk; do mkdir -p $d/plants && cp plants/data/*.json $d/plants/; done",
     "sculptview": "esbuild sculptview-src.js --bundle --format=esm --target=es2022 --outfile=sculptview.js",
     "bake:gunhand": "node gen-gunhand.mjs 0.0016",
-    "bake:revolvers": "node --max-old-space-size=6000 gen-revolvers.mjs",
-    "build:revolvers": "esbuild revolvers-src.js --bundle --minify --format=iife --target=es2020 --outfile=revolvers/revolvers.js"
+    "bake:revolvers": "node --max-old-space-size=6000 gen-revolvers.mjs && npm run copy:revolver",
+    "build:revolvers": "esbuild revolvers-src.js --bundle --minify --format=iife --target=es2020 --outfile=revolvers/revolvers.js",
+    "copy:revolver": "mkdir -p lantern/revolver && cp revolvers/data/colt75.json lantern/revolver/"
   },
   "dependencies": {
     "three": "^0.187.0"
