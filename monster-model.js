@@ -52,7 +52,7 @@ function monsterMaterial(info, uTime) {
     uJawH: { value: new THREE.Vector3() }, uHeadRot: { value: new THREE.Vector3() }, uNeckP: { value: new THREE.Vector3() }, uNeck: { value: new THREE.Vector2() },
     uJaw: { value: 0 }, uSplit: { value: 0 }, uBreath: { value: 0 }, uSway: { value: 1 },
     uSkin: { value: new THREE.Color(...info.skin) }, uWr: { value: new THREE.Vector3(...info.wr).normalize() }, uSmoke: { value: info.smoke ?? 0 },
-    uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() },
+    uEyeGain: { value: 14 }, uEyeSelf: { value: info.eyeSelf ?? 0 }, uEyeShine: { value: info.eyeShine ?? 1 }, uLightP: { value: new THREE.Vector3() }, uAppear: { value: 1 },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
@@ -64,10 +64,11 @@ function monsterMaterial(info, uTime) {
       .replace('#include <worldpos_vertex>', '#include <worldpos_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
-        uniform float uTime, uIR, uSmoke, uEyeGain, uEyeSelf, uEyeShine; uniform vec3 uSkin, uWr, uLightP;
+        uniform float uTime, uIR, uSmoke, uEyeGain, uEyeSelf, uEyeShine, uAppear; uniform vec3 uSkin, uWr, uLightP;
         varying vec3 vObj; varying vec4 vMat; varying vec4 vExt; varying vec2 vAtt; varying vec3 vWP;
         ${NOISE}`)
       .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if (uAppear < 1.0 && vnoise3(vObj * 7.0) * 0.5 + 0.5 + 0.25 * vnoise3(vObj * 23.0) > uAppear * 1.3) discard; // coming through, piece by piece
         if (uSmoke > 0.0) {
           float fc = abs(dot(normalize(vNormal), normalize(vViewPosition)));
           float n = fbm3(vObj * 7.0 + vec3(0.0, -uTime * 0.35, 0.0)) * 0.5 + 0.5;
@@ -110,7 +111,7 @@ function monsterMaterial(info, uTime) {
           float shine = min(5.0, uEyeGain * pow(fc, 4.0) / pow(max(dl, 1.3), 1.5)) * uEyeShine;
           totalEmissiveRadiance += vExt.x * vec3(0.96, 1.0, 0.9) * (shine + uEyeSelf * (0.4 + 0.6 * fc)); }`);
   };
-  m.customProgramCacheKey = () => 'game-monster-v1';
+  m.customProgramCacheKey = () => 'game-monster-v2';
   return { mat: m, own };
 }
 function parse(j) {
@@ -155,6 +156,9 @@ const ease = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * (3 - 2 * u
 const easeIn = (u) => { u = Math.min(1, Math.max(0, u)); return u * u * u; };
 const easeOut = (u) => { u = Math.min(1, Math.max(0, u)); return 1 - Math.pow(1 - u, 3); };
 const FAST = { travel: 0.11, d: 0.68 };
+// 임시 (사용자: 점프스퀘어에서 입을 안 다묾): the jaws take this long to slam shut (s), stay shut this long before the black (s),
+// and the head draws back this far while they shut, so the whole bite is in view (m)
+const SNAP = { close: 0.13, hold: 0.06, pull: 0.12 };
 const _fwd = new THREE.Vector3(), _tgt = new THREE.Vector3(), _fz = new THREE.Vector3(), _hy = new THREE.Vector3(), _to = new THREE.Vector3(), _qt = new THREE.Quaternion(),
   _p = new THREE.Vector3(), _q = new THREE.Vector3(), _h0 = new THREE.Vector3();
 function faceTarget(M, camera, d, max) {
@@ -175,7 +179,7 @@ export function scareStep(M, camera, dt, on) {
   const s = M.sc; if (!s) return null;
   const o = M.own, split = !!M.meta.split;
   s.t += dt;
-  const E = s.t, hit = FAST.travel, shutT = hit + 0.72, cutT = shutT + 0.08, back0 = cutT + 0.75, back1 = back0 + 0.8;
+  const E = s.t, hit = FAST.travel, shutT = hit + 0.72, snapT = shutT + SNAP.close, cutT = snapT + SNAP.hold, back0 = cutT + 0.75, back1 = back0 + 0.8;
   const once = (k, f) => { if (!s.fired[k]) { s.fired[k] = 1; f(); } };
   once('roar', () => on.roar());
   if (E >= cutT) once('cut', () => { on.cut(); M.root.visible = false; });
@@ -199,7 +203,7 @@ export function scareStep(M, camera, dt, on) {
   M.root.position.copy(P).sub(_q.copy(H0).applyQuaternion(M.root.quaternion));
   o.uHeadRot.value.copy(T.cur);
   let jaw = max * (u >= 1 ? 0.85 + 0.15 * Math.sin(E * 33) : u);
-  if (E >= shutT) { const k = easeIn((E - shutT) / (cutT - shutT)); o.uHeadRot.value.multiplyScalar(1 - k); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; }
+  if (E >= shutT) { const k = Math.min(1, ((E - shutT) / SNAP.close) ** 2); o.uHeadRot.value.multiplyScalar(1 - k); jaw = max - (max + M.meta.jawOpen * (split ? 0.95 : 0.9)) * k; M.root.position.addScaledVector(_fwd, SNAP.pull * k); } // shut where you can see it
   o.uJaw.value = jaw;
   // close up, the eyes must not wash out the face
   const dHead = camera.position.distanceTo(_p.copy(H0).applyQuaternion(M.root.quaternion).add(M.root.position)), dim = 0.12 + 0.88 * ease((dHead - 0.9) / 1.5);

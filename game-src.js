@@ -138,7 +138,7 @@ function cowMaterial(coat, face, phase) {
   const m = new THREE.MeshPhysicalMaterial({ color: 0xffffff, roughness: 0.82, metalness: 0, sheen: 0.4, sheenRoughness: 0.6, sheenColor: new THREE.Color(coat * 0.6, coat * 0.56, coat * 0.48) });
   const own = {
     uBody: { value: new THREE.Color(coat, coat * 0.93, coat * 0.8) }, uFace: { value: new THREE.Color(face, face * 0.93, face * 0.8) },
-    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 }, uGait: { value: new THREE.Vector4() }, uEyeOff: { value: 0 },
+    uPhase: { value: phase }, uPose: { value: new THREE.Vector4() }, uTail: { value: 0 }, uGait: { value: new THREE.Vector4() }, uEyeOff: { value: 0 }, uGone: { value: 0 },
   };
   m.userData.own = own;
   m.onBeforeCompile = (sh) => {
@@ -160,7 +160,9 @@ function cowMaterial(coat, face, phase) {
         ${COW_RIG_POS}`)
       .replace('#include <fog_vertex>', '#include <fog_vertex>\n vWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform float uEyeFall; uniform float uEyeOff; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
+      .replace('#include <common>', `#include <common>\nuniform vec3 uLanternPos; uniform float uEyeGain; uniform float uEyeSelf; uniform float uEyeFall; uniform float uEyeOff; uniform float uGone; uniform vec3 uBody; uniform vec3 uFace; varying vec4 vMat; varying float vEye; varying vec3 vObj; varying vec3 vWP; varying vec3 vExt; varying vec3 vHead;\n${NOISE_GLSL}`)
+      .replace('#include <clipping_planes_fragment>', `#include <clipping_planes_fragment>
+        if (uGone > 0.0 && vnoise3(vObj * 7.0) * 0.5 + 0.5 + 0.25 * vnoise3(vObj * 23.0) < uGone * 1.3) discard; // the cow falls away in pieces`)
       .replace('#include <color_fragment>', `#include <color_fragment>
         { float pn = vnoise3(vObj*2.7)*0.5+0.5; float pn2 = vnoise3(vObj*9.0);
           float fm = smoothstep(0.2, 0.8, vExt.z + 0.25*vnoise3(vObj*14.0));
@@ -193,7 +195,7 @@ function cowMaterial(coat, face, phase) {
         { float dl = length(vWP - uLanternPos); float fc = clamp(dot(normal, normalize(vViewPosition)), 0.0, 1.0);
           totalEmissiveRadiance += vEye * vec3(0.95,1.0,0.92) * (uEyeGain * pow(fc, 6.0) / pow(max(dl, 1.3), uEyeFall) + uEyeSelf * pow(fc, 4.0)) * (1.0 - uEyeOff); }`);
   };
-  m.customProgramCacheKey = () => 'cow-rig-v4';
+  m.customProgramCacheKey = () => 'cow-rig-v5';
   return m;
 }
 
@@ -1629,7 +1631,8 @@ const glintTex = (() => { const c = document.createElement('canvas'); c.width = 
 function makeMonster() {
   const asked = +new URLSearchParams(location.search).get('clue'), M = NL.monster;
   const clue = M.clues.includes(asked) ? asked : M.clues[Math.floor(Math.random() * M.clues.length)];
-  const can = cows.filter((k) => NL.monster.anyRow || !k.back), c = can[Math.floor(Math.random() * can.length)];
+  const at = DEBUG ? new URLSearchParams(location.search).get('at') : null; // (debug: ?at=2 puts it at that place)
+  const can = cows.filter((k) => (NL.monster.anyRow || !k.back) && (at === null || k.station === +at)), c = can[Math.floor(Math.random() * can.length)];
   c.mesh.material.userData.own.uEyeOff.value = 1;
   if (clue === 4) c.mesh.visible = false; // no body
   const eyes = [0, 1, 2].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
@@ -1722,27 +1725,28 @@ const fight = { on: false, phase: '', t: 0, hits: 0, pos: new THREE.Vector3(), f
 const _fq = new THREE.Quaternion(), _fe = new THREE.Euler(), _fd = new THREE.Vector3(), _fh = new THREE.Vector3();
 function beginFight(c) {
   const M = c.mon.M;
-  c.gone = true; c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false;
-  ui.sub.classList.remove('show'); subTimer = 0;
-  if (!M) return; // not loaded (slow connection): it is simply gone
-  Object.assign(fight, { on: true, phase: 'rise', t: 0, hits: 0, M, endT: -1 });
+  c.gone = true; ui.sub.classList.remove('show'); subTimer = 0;
+  if (!M) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; return; } // not loaded (slow connection): it is simply gone
+  Object.assign(fight, { on: true, phase: 'morph', t: 0, hits: 0, M, endT: -1, cow: c, step: 0 });
   fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
-  M.root.visible = true; placeFight();
-  if (msnd) msnd.pounce(M.info.roar); buzz(200); // 임시: its own roar while it changes (기획서: 소 울음이 일그러져 포효가 됨 — 소리 후보는 아직)
+  fight.home = c.mesh.position.clone();
+  M.own.uAppear.value = 0; M.root.visible = true; placeFight();
+  if (msnd) msnd.gape(M.id); buzz(120); // 임시: the wet sound as it starts to come apart (기획서의 '소 울음이 일그러지는 소리'는 아직)
   for (const k of cows) if (k !== c && !k.dead && !k.gone) scatter(k, fight.pos);
 }
-function placeFight() { // standing on the ground where it is, turned to you
+// standing where it is, turned to you; walking, its body lurches with each step
+function placeFight(bob = 0, roll = 0, lean = 0) {
   const M = fight.M, yaw = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
-  M.root.quaternion.setFromEuler(_fe.set(0, yaw, 0)); M.root.position.copy(fight.pos);
+  M.root.quaternion.setFromEuler(_fe.set(lean, yaw, roll, 'YXZ')); M.root.position.copy(fight.pos); M.root.position.y += bob;
 }
 function fightHit() {
   const F = NL.fight; fight.hits++; buzz(60);
-  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; if (msnd) msnd.gape(fight.M.id); return; }
+  if (msnd) msnd.gape(fight.M.id);
+  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; return; }
   _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
   fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, F.push); fight.phase = 'pushed'; fight.t = 0;
-  if (msnd) msnd.gape(fight.M.id);
 }
-// does a shot hit the thing? its head and its body
+// does a shot hit the thing? its head and its body (also while it is still coming through)
 function rayFight(o, d) {
   if (!fight.on || fight.phase === 'die' || fight.phase === 'eat') return Infinity;
   const M = fight.M; _fh.fromArray(M.meta.headPivot).applyQuaternion(M.root.quaternion).add(M.root.position);
@@ -1767,28 +1771,35 @@ function fightStep(dt, time) {
     return;
   }
   idleStep(M, dt, time);
-  if (fight.phase === 'rise') { // it unfolds out of the cow's shape
-    const k = clamp(fight.t / F.rise, 0, 1); M.root.scale.set(1, 0.35 + 0.65 * smooth(k), 1); night.shake = 0.4 * (1 - k);
-    if (k >= 1) { fight.phase = 'pause'; fight.t = 0; fight.wait = rand(...F.pause); }
-  } else if (fight.phase === 'pause') {
-    const shadow = M.id === 'm5' && lamp.level > F.shadowLight; // the shadow only moves when the light is weak
-    if (fight.t >= fight.wait && !shadow) {
-      _fd.copy(camera.position).sub(fight.pos).setY(0); const left = _fd.length() - F.reach; _fd.normalize();
-      const far = rand(...F.dash) * (M.id === 'm3' ? F.crawl : 1);
-      fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, Math.min(far, Math.max(0, left) + 0.05)); fight.phase = 'dash'; fight.t = 0;
-    }
-  } else if (fight.phase === 'dash' || fight.phase === 'pushed') {
-    const k = clamp(fight.t / (fight.phase === 'pushed' ? 0.15 : F.dashTime), 0, 1);
-    fight.pos.lerpVectors(fight.from, fight.to, fight.phase === 'pushed' ? 1 - (1 - k) ** 3 : smooth(k)); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
-    if (k >= 1) {
-      if (Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z) <= F.reach + 0.1) { fight.phase = 'eat'; fight.t = 0; startEat(M); return; }
-      fight.phase = 'pause'; fight.t = 0; fight.wait = rand(...F.pause) / (M.id === 'm3' ? F.crawl : 1);
-    }
+  const crawl = M.id === 'm3' ? F.crawl : 1;
+  let bob = 0, roll = 0, lean = 0;
+  if (fight.phase === 'morph') { // the cow shudders and comes apart; the thing is there in its place, piece by piece
+    const k = clamp(fight.t / F.morph, 0, 1), c = fight.cow;
+    c.mesh.material.userData.own.uGone.value = smooth(clamp(k * 1.15, 0, 1));
+    c.mesh.position.set(fight.home.x + (Math.random() - 0.5) * 0.05 * k, fight.home.y + (Math.random() - 0.5) * 0.03 * k, fight.home.z + (Math.random() - 0.5) * 0.05 * k);
+    for (const e of c.mon.eyes) e.material.opacity = 1 - smooth(clamp(k * 2, 0, 1));
+    M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
+    M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
+    if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar); buzz(250); }
+  } else if (fight.phase === 'walk') { // it comes, fast, straight at you (the shadow only while the light is weak)
+    const still = M.id === 'm5' && lamp.level > F.shadowLight;
+    _fd.copy(camera.position).sub(fight.pos).setY(0); const left = _fd.length() - F.reach; _fd.normalize();
+    const v = still ? 0 : F.walk * crawl;
+    fight.pos.addScaledVector(_fd, Math.min(left, v * dt)); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
+    fight.step += v * dt / F.stride * Math.PI;
+    const low = M.id === 'm3' ? 0.5 : 1;
+    bob = Math.abs(Math.sin(fight.step)) * 0.07 * low * (v > 0 ? 1 : 0); roll = Math.sin(fight.step) * 0.09 * (v > 0 ? 1 : 0); lean = 0.12 * low * (v > 0 ? 1 : 0);
+    if (Math.floor((fight.step - v * dt / F.stride * Math.PI) / Math.PI) !== Math.floor(fight.step / Math.PI) && v > 0) sound.thud(0.12 * low); // its steps
+    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; startEat(M); return; }
+  } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
+    const k = clamp(fight.t / 0.15, 0, 1);
+    fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
+    if (fight.t >= 0.15 + F.stagger) { fight.phase = 'walk'; fight.t = 0; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
     const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6;
     if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
   }
-  if (fight.phase !== 'eat') placeFight();
+  if (fight.phase !== 'eat') placeFight(bob, roll, lean);
 }
 // the other cows: startled, they walk off away from it; later they come back and stand where they stood
 function scatter(c, from) {
@@ -1829,6 +1840,7 @@ function nextStation() {
     night.endT = 0; return; // 임시: going on from the last place ends the night
   }
   if (leaving) night.passed = true; // you leave it behind: it comes for you once you are at the next place, counting
+  if (night.fakeAt) { if (night.fakeEnd) { sound.hush(false); if (msnd) msnd.restore(); } night.fakeAt = 0; night.fakeEnd = 0; } // moving on ends a quiet that came to nothing
   night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
@@ -1840,7 +1852,11 @@ function nightMove(dt) {
     const k = Math.min(1, night.t / night.dur), nx = lerp(night.x0, night.x1, smooth(k));
     speed = Math.abs(nx - player.pos.x) / Math.max(dt, 1e-3);
     player.pos.x = nx;
-    if (k >= 1) { night.walking = false; night.i++; night.lastAct = performance.now(); if (night.passed && !night.scareAt) night.scareAt = performance.now() + rand(...NL.scare.wait) * 1000; }
+    if (k >= 1) {
+      night.walking = false; night.i++; night.lastAct = performance.now();
+      if (night.passed && !night.scareAt) night.scareAt = performance.now() + rand(...NL.scare.wait) * 1000;
+      else if (Math.random() < NL.scare.fake.chance) night.fakeAt = performance.now() + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
+    }
   }
   if (TOUCH) {
     const turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
@@ -1876,6 +1892,10 @@ function nightStep(dt) {
     return;
   }
   scareFrame(dt); hurtFrame(dt);
+  if (night.fakeAt && !night.passed && !night.scaring && !paused) {
+    if (!night.fakeEnd && now >= night.fakeAt) { night.fakeEnd = now + rand(...NL.scare.fake.quiet) * 1000; sound.hush(true); if (msnd) msnd.freeze('none'); }
+    if (night.fakeEnd && now >= night.fakeEnd) { night.fakeAt = 0; night.fakeEnd = 0; sound.hush(false); if (msnd) msnd.restore(); }
+  }
   if (night.passed && night.scareAt && !night.scaring && monster && !monster.gone && !paused) {
     if (!night.hushed && now >= night.scareAt - NL.scare.hush * 1000) { night.hushed = true; sound.hush(true); if (msnd) msnd.freeze('none'); } // everything goes quiet
     if (now >= night.scareAt) { night.scareAt = 0; night.passed = false; beginScare(); }
@@ -1885,7 +1905,11 @@ function nightStep(dt) {
   if (fight.on) return;
   if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
   if (night.i === L && night.finishAt < 0 && stationDone(L)) night.finishAt = now + NL.endWait * 1000;
-  if (night.finishAt > 0 && now >= night.finishAt) { night.endT = 0; return; }
+  if (night.finishAt > 0 && now >= night.finishAt && !night.passed && !night.scaring) {
+    // the night would end here; if the thing is still standing at this last place, it was missed: it comes first, then the night ends
+    if (monster && !monster.gone && !fight.on && monster.station === L) { night.passed = true; night.endAfter = true; night.scareAt = now + rand(...NL.scare.lastWait) * 1000; return; }
+    night.endT = 0; return;
+  }
   if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!stationDone(night.i)) hintCount(); else if (night.i < L) hintNext(); }
 }
 // pause: back on a phone, Esc on a PC (also when the pointer lock or full screen is lost)
@@ -2595,10 +2619,12 @@ if (DEBUG) {
     relight: () => lampAction(),
     night: () => { nightT = 1; },
     // the night scene
+    countStation: (i) => { for (const c of cows) if (c.station === i && !c.dead && !c.gone) { if (!c.counted) count++; c.counted = true; } }, fake: () => [night.fakeAt ? Math.round(night.fakeAt - performance.now()) : null, !!night.fakeEnd],
     hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring, scareIn: () => night.scareAt ? Math.round(night.scareAt - performance.now()) : null, passed: () => !!night.passed,
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
+    fakeChance: (k) => { NL.scare.fake.chance = k; },
     fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp }),
     shootMonster: () => { const c = monster; if (c && !c.gone) { nightHit(c); return true; } return false; }, hitFight: () => fightHit(),
     gunState: () => rev && { cocked: rev.state.cocked, anim: rev.state.anim?.type || null, chambers: rev.state.chambers.slice(), top: rev.state.top },
