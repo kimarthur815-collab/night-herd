@@ -1665,7 +1665,7 @@ function beginScare() {
   if (!M) { hurt(); return; } // not loaded yet (slow connection): it still hurts
   night.scaring = true; ui.sub.classList.remove('show'); subTimer = 0;
   M.own.uLightP.value.copy(lanternLight.position);
-  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d });
+  startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d, leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null });
 }
 function scareFrame(dt) {
   const M = monster && monster.mon.M;
@@ -1804,7 +1804,7 @@ function fightStep(dt, time) {
     M.own.uHeadRot.value.y += -Math.abs(Math.sin(fight.step)) * 0.1 * moving;
     M.own.uJaw.value += G.gape * (0.7 + 0.3 * Math.sin(fight.step * 3)) * moving;
     if (Math.floor(stepBefore / Math.PI) !== Math.floor(fight.step / Math.PI) && moving) sound.thud(0.14 * low); // its steps
-    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0; startEat(M); return; }
+    if (left <= 0.01) { fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0; startEat(M, { leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null }); return; }
   } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
     const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k);
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
