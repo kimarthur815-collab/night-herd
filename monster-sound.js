@@ -15,11 +15,12 @@ export function makeMonsterSound(opt = {}) {
     if (!a) { try { a = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
     out = a.createGain(); out.gain.value = 0.9;
     muffle = a.createBiquadFilter(); muffle.type = 'lowpass'; muffle.frequency.value = 18000; muffle.Q.value = 0.7;
-    const comp = a.createDynamicsCompressor(); comp.threshold.value = -8; comp.ratio.value = 4; comp.attack.value = 0.003; comp.release.value = 0.2;
+    const comp = a.createDynamicsCompressor(); comp.threshold.value = -4; comp.ratio.value = 3; comp.attack.value = 0.003; comp.release.value = 0.2;
     // a soft ceiling after the compressor: bone clicks are too quick for it, and must not clip
     const lim = a.createWaveShaper(), n = 2048, cv = new Float32Array(n);
-    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1, ax = Math.abs(x); cv[i] = Math.sign(x) * (ax < 0.7 ? ax : 0.7 + 0.28 * Math.tanh((ax - 0.7) / 0.28)); }
-    lim.curve = cv; const pad = a.createGain(); pad.gain.value = 0.92;
+    // the shaper sees half the signal, so peaks up to twice full scale are rounded off instead of clamped flat
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1, ax = Math.abs(x) * 2 * 0.92; cv[i] = Math.sign(x) * (ax < 0.7 ? ax : 0.7 + 0.28 * Math.tanh((ax - 0.7) / 0.28)); }
+    lim.curve = cv; const pad = a.createGain(); pad.gain.value = 0.5;
     out.connect(muffle).connect(comp).connect(pad).connect(lim).connect(a.destination);
     bus = a.createGain(); bus.connect(out);                         // ambience: ducked during the pounce
     verbIn = a.createConvolver(); verbIn.buffer = impulse(a, 1.8, 2.6);
@@ -216,15 +217,15 @@ export function makeMonsterSound(opt = {}) {
     } catch (e) { bufs[kind] = null; }
   }
   function useBuffer(kind, buf) { bufs[kind] = buf; }
-  const STUTTER = { first: 0.05, grow: 1.16, span: 1.1 }; // first gap (s), each gap this much longer, taps for this long
+  const STUTTER = { first: 0.08, grow: 1.16, span: 1.1, gain: 2.2 }; // louder on request // first gap (s), each gap this much longer, taps for this long
   function stutter(t, buf) {
     let at = t, gap = STUTTER.first; const hits = [];
     while (at - t < STUTTER.span) { hits.push([at, gap]); at += gap; gap *= STUTTER.grow; }
     hits.forEach(([u, g], i) => {
       const last = i === hits.length - 1, len = last ? buf.duration : g;
       const src = a.createBufferSource(); src.buffer = buf;
-      const gg = a.createGain(); gg.gain.setValueAtTime(0.0001, u); gg.gain.exponentialRampToValueAtTime(1.45, u + 0.003);
-      if (!last) { gg.gain.setValueAtTime(1.45, u + len - 0.006); gg.gain.exponentialRampToValueAtTime(0.0001, u + len); }
+      const gg = a.createGain(); gg.gain.setValueAtTime(0.0001, u); gg.gain.exponentialRampToValueAtTime(STUTTER.gain, u + 0.003);
+      if (!last) { gg.gain.setValueAtTime(STUTTER.gain, u + len - 0.006); gg.gain.exponentialRampToValueAtTime(0.0001, u + len); }
       src.connect(gg).connect(out); gg.connect(verbIn);
       src.start(u, 0, len + 0.01);
     });
@@ -236,10 +237,10 @@ export function makeMonsterSound(opt = {}) {
     else { roarRaw(kind, t); prepare(kind); }
     noise(t, 0.25, { f0: 1800, f1: 600, q: 0.8, gain: 0.3, att: 0.006 }); // the rush of air as it comes
   }
-  function cut() {
+  function cut(opts = {}) {
     if (!ready()) return;
     const t = a.currentTime + 0.005;
-    muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(900, t); muffle.frequency.exponentialRampToValueAtTime(500, t + 1.2);
+    if (opts.muffle !== false) { muffle.frequency.cancelScheduledValues(t); muffle.frequency.setValueAtTime(900, t); muffle.frequency.exponentialRampToValueAtTime(500, t + 1.2); }
     // the ringing goes around the muffle, straight out
     const o = a.createOscillator(); o.frequency.value = 3400; const g = a.createGain(); env(g, t, 0.01, 1.8, 0.06);
     o.connect(g).connect(a.destination); o.start(t); o.stop(t + 1.9);

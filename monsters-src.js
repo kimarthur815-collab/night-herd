@@ -477,7 +477,7 @@ function scareStep(M, dt) {
   const E = s.scare, hit = C.appear + C.travel, shutT = hit + 0.72, cutT = shutT + 0.08, back0 = cutT + 0.75, back1 = back0 + 0.8;
   const once = (key, f) => { if (!s.fired[key]) { s.fired[key] = 1; f(); } };
   if (E >= C.appear) once('roar', () => { snd.freeze('none'); snd.pounce(pounceKind); buzz(450); });
-  if (E >= cutT) once('cut', () => { snd.snap(); snd.cut(); buzz(220); });
+  if (E >= cutT) once('cut', () => { snd.snap(); snd.cut({ muffle: false }); buzz(220); }); // the roar keeps going at full in the dark
   if (E >= back0) once('back', () => snd.restore());
   if (E >= back1) { s.scare = -1; s.fired = {}; s.thr = null; M.root.position.set(0, 0, 0); M.root.quaternion.identity(); return { jaw: -0.12, fade: 0 }; }
   if (E < C.appear) return { jaw: -0.12, fade: 1 };                   // ① a beat of darkness first
