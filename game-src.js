@@ -1896,36 +1896,49 @@ function flinch(at, shot) {
     const d = Math.hypot(c.mesh.position.x - at.x, c.mesh.position.z - at.z); if (d > F.radius) continue;
     _fd.set(c.mesh.position.x - at.x, 0, c.mesh.position.z - at.z); if (_fd.lengthSq() < 1e-4) _fd.set(0, 0, -1); _fd.normalize();
     const back = rand(...F.back) * (1 - 0.5 * d / F.radius);
+    c.flinchHome ??= { x: c.mesh.position.x, z: c.mesh.position.z };
     c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.mesh.position.x + _fd.x * back, c.mesh.position.z + _fd.z * back), t: -rand(0, 0.15), end: c.heading, keep: true };
     c.walk.dur = back / F.speed;
     c.ai && (c.ai.flick = 1);
   }
 }
 function scatter(c, from) {
-  c.home ??= { x: c.mesh.position.x, z: c.mesh.position.z, yaw: c.heading };
+  c.home ??= c.flinchHome ? { ...c.flinchHome, yaw: c.heading } : { x: c.mesh.position.x, z: c.mesh.position.z, yaw: c.heading }; c.flinchIn = undefined; c.flinchHome = undefined;
   _fd.set(c.mesh.position.x - from.x, 0, c.mesh.position.z - from.z); if (_fd.lengthSq() < 1e-4) _fd.set(1, 0, 0); _fd.normalize();
   c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.mesh.position.x + _fd.x * rand(...NL.fight.scatter), c.mesh.position.z + _fd.z * rand(...NL.fight.scatter)), t: 0, end: null };
   c.walk.dur = c.walk.from.distanceTo(c.walk.to) / NL.fight.scatterSpeed;
 }
 function scatterBack(c) {
   if (!c.home) return;
-  c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.home.x, c.home.z), t: 0, end: c.home.yaw };
-  c.walk.dur = Math.max(0.5, c.walk.from.distanceTo(c.walk.to) / NL.fight.scatterSpeed);
+  const B = NL.fight.comeBack; // 사용자: 다시 올 때 회전과 이동이 너무 빠름 — slower, one by one, turning slowly
+  c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.home.x, c.home.z), t: -rand(...B.delay), end: c.home.yaw, turn: B.turn, speed: B.speed };
+  c.walk.dur = Math.max(0.5, c.walk.from.distanceTo(c.walk.to) / B.speed);
 }
 function walkCows(dt) {
   for (const c of cows) {
+    if (c.flinchIn !== undefined && !c.walk && !c.dead && !c.gone && !fight.on) { // 사용자: 물러났다가 다시 오게 — it steps back up to where it stood, facing the same way
+      if ((c.flinchIn -= dt) <= 0) {
+        const h = c.flinchHome; c.flinchIn = undefined; c.flinchHome = undefined;
+        if (h) { c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(h.x, h.z), t: 0, end: c.heading, keep: true, back: true }; c.walk.dur = Math.max(0.4, c.walk.from.distanceTo(c.walk.to) / NL.flinch.returnSpeed); }
+      }
+    }
     const w = c.walk; if (!w || c.dead) continue;
     w.t += dt; const k = clamp(w.t / w.dur, 0, 1), x = lerp(w.from.x, w.to.x, smooth(k)), z = lerp(w.from.y, w.to.y, smooth(k));
     const goYaw = Math.atan2(w.to.x - w.from.x, w.to.y - w.from.y), yaw = w.keep ? w.end : k < 1 ? goYaw : (w.end ?? goYaw); // (a flinch: it backs off without turning)
-    c.heading = c.heading + Math.atan2(Math.sin(yaw - c.heading), Math.cos(yaw - c.heading)) * Math.min(1, dt * 5);
+    const dy = Math.atan2(Math.sin(yaw - c.heading), Math.cos(yaw - c.heading));
+    c.heading += w.turn ? clamp(dy * Math.min(1, dt * 3), -w.turn * dt, w.turn * dt) : dy * Math.min(1, dt * 5); // (coming back: no faster than w.turn)
     const fx = Math.sin(c.heading) * 0.9, fz = Math.cos(c.heading) * 0.9, hf = groundH(x + fx, z + fz), lean = NL.lean * Math.atan2(groundH(x - fx, z - fz) - hf, 1.8);
     c.y0 = hf + 0.9 * Math.sin(lean);
     c.mesh.position.set(x, c.y0, z); c.mesh.rotation.y = c.heading; c.mesh.rotation.x = lean; c.mesh.updateMatrixWorld(true);
     c.blockers.forEach((b, j) => { const p = _fd.set(0, 0, [0.55, 0, -0.6][j] * 0.92).applyMatrix4(c.mesh.matrixWorld); b.x = p.x; b.z = p.z; });
     const moving = k < 1;
-    c.gait = damp(c.gait || 0, moving ? (w.keep ? 0.35 : 1) : 0, 6, dt); c.gaitPhase = (c.gaitPhase || 0) + dt * NL.fight.scatterSpeed / 1.45 * c.gait;
+    const turning = Math.abs(dy) > 0.05 && (!moving || w.t <= 0); // turning round on the spot (before setting off, or at the end): the legs keep stepping
+    c.gait = damp(c.gait || 0, moving && w.t > 0 ? (w.keep ? 0.35 : 1) : turning ? 0.4 : 0, 6, dt); c.gaitPhase = (c.gaitPhase || 0) + dt * (w.speed ?? NL.fight.scatterSpeed) / 1.45 * Math.max(c.gait, 0);
     c.mesh.material.userData.own.uGait.value.set(c.gaitPhase, c.gait, 0, 0);
-    if (!moving && c.gait < 0.02) { c.walk = null; if (w.end !== null && !w.keep) c.home = null; }
+    if (!moving && !turning && c.gait < 0.02) {
+      c.walk = null; if (w.end !== null && !w.keep) c.home = null;
+      if (w.keep && !w.back) c.flinchIn = rand(...NL.flinch.wait); // a flinch over: after a while it comes back to its place
+    }
   }
 }
 function nextStation() {
@@ -2750,7 +2763,7 @@ if (DEBUG) {
     gunState: () => rev && { cocked: rev.state.cocked, anim: rev.state.anim?.type || null, chambers: rev.state.chambers.slice(), top: rev.state.top },
     shootAt: (x, y) => nightShoot(x, y), cock: () => nightCock(), dead: () => cows.filter((c) => c.dead).length,
     nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
-      cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), counted: c.counted })) }),
+      cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), h: +c.heading.toFixed(3), fi: c.flinchIn ?? null, w: !!c.walk, counted: c.counted })) }),
     tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },
     eyes: () => cows.map((c) => [+c.y0.toFixed(2), +c.mesh.rotation.x.toFixed(2), +c.eyeWorld.y.toFixed(2), +c.eyeWorld.z.toFixed(2), +c.mesh.position.z.toFixed(2)]),
     screenOf: (i) => { const v = cows[i].eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
