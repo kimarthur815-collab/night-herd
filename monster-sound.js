@@ -240,10 +240,10 @@ export function makeMonsterSound(opt = {}) {
     rec[kind] = 'pending';
     try { const ab = await (await fetch(url)).arrayBuffer(); rec[kind] = await new Promise((ok, no) => a.decodeAudioData(ab, ok, no)); } catch (e) { rec[kind] = null; }
   }
-  function pounce(kind) {
+  function pounce(kind, k = 1) { // k: how loud, against the full pounce (recordings only)
     if (!ready()) return;
     const r = rec[kind];
-    if (r && r !== 'pending') { const s = a.createBufferSource(), g = a.createGain(); s.buffer = r; g.gain.value = recGain; s.connect(g).connect(out); s.start(a.currentTime + 0.005); return; }
+    if (r && r !== 'pending') { const s = a.createBufferSource(), g = a.createGain(); s.buffer = r; g.gain.value = recGain * k; s.connect(g).connect(out); s.start(a.currentTime + 0.005); return; }
     const t = a.currentTime + 0.005, buf = bufs[kind];
     if (buf && buf !== 'pending') stutter(t, buf);
     else { roarRaw(kind, t); prepare(kind); }

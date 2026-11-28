@@ -1798,7 +1798,7 @@ function fightStep(dt, time) {
     M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
     M.own.uHeadRot.value.z += M.twist * smooth(clamp((k - 0.4) / 0.5, 0, 1)); M.own.uHeadRot.value.y += M.hang * smooth(k); // the neck goes over as it comes through
-    if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar); buzz(250); }
+    if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar, NL.fight.shotRoar); buzz(250); } // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
   } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
     const G = F.gait, L = F.leap, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
     _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(); _fd.normalize();
