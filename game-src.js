@@ -647,9 +647,12 @@ class Sound {
     if (!this.mooBuf || this.ctx.currentTime < this.mooAt) return;
     this.mooAt = this.ctx.currentTime + rand(...NL.moo.every);
     const can = cows.filter((c) => c.mesh.visible && !c.dead && !c.gone); if (!can.length) return;
-    const c = can[Math.floor(Math.random() * can.length)], hp = c.headWorld ?? c.mesh.position;
-    const s = this.ctx.createBufferSource(), g = this.ctx.createGain(), p = this.panner(hp.x, hp.y, hp.z, 1.0);
-    s.buffer = this.mooBuf; s.playbackRate.value = rand(...NL.moo.rate); g.gain.value = NL.moo.gain;
+    this.mooFrom(can[Math.floor(Math.random() * can.length)]);
+  }
+  mooFrom(c, gain = NL.moo.gain, rate = rand(...NL.moo.rate)) { // that cow moos, from where it stands
+    if (!this.mooBuf) return;
+    const hp = c.headWorld ?? c.mesh.position, s = this.ctx.createBufferSource(), g = this.ctx.createGain(), p = this.panner(hp.x, hp.y, hp.z, 1.0);
+    s.buffer = this.mooBuf; s.playbackRate.value = rate; g.gain.value = gain;
     s.connect(g).connect(p); s.start(); s.onended = () => p.disconnect(); this.moos = (this.moos ?? 0) + 1;
   }
   musicTick() { // the next drone, one of them at random, overlapping the last one's fade
@@ -1128,8 +1131,8 @@ function shoot() {
     const t = raySphere(_ro, _rd, _rc.set(c.headWorld.x, c.headWorld.y, c.headWorld.z), 0.24 * c.s); if (t < best) { best = t; hit = c; }
   }
   const tg = _rd.y < -1e-3 ? -_ro.y / _rd.y : Infinity;
-  if (hit && best < tg && best < 80) { if (hit === 'fight') fightHit(); else if (NIGHT_SCENE) nightHit(hit); else killCow(hit, _rd); }
-  else if (tg < 70) puff(_rc.copy(_ro).addScaledVector(_rd, tg), 0.6, [0.16, 0.13, 0.1]);
+  if (hit && best < tg && best < 80) { if (hit === 'fight') fightHit(); else if (NIGHT_SCENE) { const at = _rc.copy(_ro).addScaledVector(_rd, best).clone(); nightHit(hit); if (!hit.mon) flinch(at, hit); } else killCow(hit, _rd); }
+  else if (tg < 70) { const at = _rc.copy(_ro).addScaledVector(_rd, tg); puff(at, 0.6, [0.16, 0.13, 0.1]); if (NIGHT_SCENE && !fight.on) flinch(at.clone(), null); }
   _ga.set(0, 0, MUZZLE_Z - 0.06); gunPivot.localToWorld(_ga); _ga.applyQuaternion(camera.quaternion).add(camera.position);
   for (let i = 0; i < 4; i++) puff(_ga, 1.3, [0.55, 0.54, 0.52], _rd);
   // every cow hears it
@@ -1882,6 +1885,22 @@ function fightStep(dt, time) {
   if (fight.phase !== 'eat') placeFight(bob, roll, lean);
 }
 // the other cows: startled, they walk off away from it; later they come back and stand where they stood
+// 사용자: 바닥이나 진짜 소를 쏘면 소 울음, 옆 소들은 살짝 놀라 살짝 뒤로 — the shot cow (or the one nearest a shot into the ground)
+// moos; the cows close to where it hit flinch and back off a step, still facing the same way
+function flinch(at, shot) {
+  const F = NL.flinch, alive = cows.filter((c) => !c.dead && !c.gone && c.mesh.visible);
+  const who = shot ?? alive.reduce((b, c) => (!b || c.mesh.position.distanceToSquared(at) < b.mesh.position.distanceToSquared(at) ? c : b), null);
+  if (who && who.mesh.position.distanceTo(at) < F.mooNear) sound.mooFrom(who, NL.moo.gain * F.mooLoud, rand(...F.mooRate));
+  for (const c of alive) {
+    if (c === shot || c.walk) continue;
+    const d = Math.hypot(c.mesh.position.x - at.x, c.mesh.position.z - at.z); if (d > F.radius) continue;
+    _fd.set(c.mesh.position.x - at.x, 0, c.mesh.position.z - at.z); if (_fd.lengthSq() < 1e-4) _fd.set(0, 0, -1); _fd.normalize();
+    const back = rand(...F.back) * (1 - 0.5 * d / F.radius);
+    c.walk = { from: new THREE.Vector2(c.mesh.position.x, c.mesh.position.z), to: new THREE.Vector2(c.mesh.position.x + _fd.x * back, c.mesh.position.z + _fd.z * back), t: -rand(0, 0.15), end: c.heading, keep: true };
+    c.walk.dur = back / F.speed;
+    c.ai && (c.ai.flick = 1);
+  }
+}
 function scatter(c, from) {
   c.home ??= { x: c.mesh.position.x, z: c.mesh.position.z, yaw: c.heading };
   _fd.set(c.mesh.position.x - from.x, 0, c.mesh.position.z - from.z); if (_fd.lengthSq() < 1e-4) _fd.set(1, 0, 0); _fd.normalize();
@@ -1897,16 +1916,16 @@ function walkCows(dt) {
   for (const c of cows) {
     const w = c.walk; if (!w || c.dead) continue;
     w.t += dt; const k = clamp(w.t / w.dur, 0, 1), x = lerp(w.from.x, w.to.x, smooth(k)), z = lerp(w.from.y, w.to.y, smooth(k));
-    const goYaw = Math.atan2(w.to.x - w.from.x, w.to.y - w.from.y), yaw = k < 1 ? goYaw : (w.end ?? goYaw);
+    const goYaw = Math.atan2(w.to.x - w.from.x, w.to.y - w.from.y), yaw = w.keep ? w.end : k < 1 ? goYaw : (w.end ?? goYaw); // (a flinch: it backs off without turning)
     c.heading = c.heading + Math.atan2(Math.sin(yaw - c.heading), Math.cos(yaw - c.heading)) * Math.min(1, dt * 5);
     const fx = Math.sin(c.heading) * 0.9, fz = Math.cos(c.heading) * 0.9, hf = groundH(x + fx, z + fz), lean = NL.lean * Math.atan2(groundH(x - fx, z - fz) - hf, 1.8);
     c.y0 = hf + 0.9 * Math.sin(lean);
     c.mesh.position.set(x, c.y0, z); c.mesh.rotation.y = c.heading; c.mesh.rotation.x = lean; c.mesh.updateMatrixWorld(true);
     c.blockers.forEach((b, j) => { const p = _fd.set(0, 0, [0.55, 0, -0.6][j] * 0.92).applyMatrix4(c.mesh.matrixWorld); b.x = p.x; b.z = p.z; });
     const moving = k < 1;
-    c.gait = damp(c.gait || 0, moving ? 1 : 0, 6, dt); c.gaitPhase = (c.gaitPhase || 0) + dt * NL.fight.scatterSpeed / 1.45 * c.gait;
+    c.gait = damp(c.gait || 0, moving ? (w.keep ? 0.35 : 1) : 0, 6, dt); c.gaitPhase = (c.gaitPhase || 0) + dt * NL.fight.scatterSpeed / 1.45 * c.gait;
     c.mesh.material.userData.own.uGait.value.set(c.gaitPhase, c.gait, 0, 0);
-    if (!moving && c.gait < 0.02) { c.walk = null; if (w.end !== null) c.home = null; }
+    if (!moving && c.gait < 0.02) { c.walk = null; if (w.end !== null && !w.keep) c.home = null; }
   }
 }
 function nextStation() {
