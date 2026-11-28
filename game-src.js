@@ -1682,7 +1682,8 @@ function makeMonster() {
   const eyes = [0, 1, 2].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
     sp.scale.setScalar(M.glint); scene.add(sp); return sp; });
   eyes[2].visible = clue === 7;
-  const forms = NL.scare.forms[clue], form = forms[Math.floor(Math.random() * forms.length)];
+  const askedForm = DEBUG ? new URLSearchParams(location.search).get('form') : null; // (debug: ?form=m5)
+  const forms = NL.scare.forms[clue], form = askedForm && MONSTERS[askedForm] ? askedForm : forms[Math.floor(Math.random() * forms.length)];
   c.mon = { clue, eyes, form, M: null }; monster = c;
   loadMonster(`../monsters/data/${form}.json`, form, U.uTime).then((M) => { M.twist = (Math.random() < 0.5 ? -1 : 1) * NL.fight.twist; M.hang = NL.fight.hang; c.mon.M = M; scene.add(M.root); }).catch((e) => console.warn('monster', e));
 }
@@ -1804,15 +1805,17 @@ function twistSound() { // through the monster's own sound, so it runs straight 
   s.connect(g).connect(n); s.start();
 }
 function fightHit() {
-  const F = NL.fight; fight.hits++; buzz(60);
+  const F = NL.fight, shadow = fight.M.id === 'm5'; buzz(60); // 사용자: 그림자는 총에 안 죽고 잠깐 멈칫만
+  if (!shadow) fight.hits++;
   if (msnd) msnd.gape(fight.M.id);
   if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; return; }
   _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
-  fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, F.push); fight.phase = 'pushed'; fight.t = 0;
+  fight.stagger = shadow ? F.shadow.stagger : F.stagger;
+  fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, shadow ? F.shadow.push : F.push); fight.phase = 'pushed'; fight.t = 0;
 }
 // does a shot hit the thing? its head and its body (also while it is still coming through)
 function rayFight(o, d) {
-  if (!fight.on || fight.phase === 'die' || fight.phase === 'eat') return Infinity;
+  if (!fight.on || fight.phase === 'die' || fight.phase === 'eat' || fight.phase === 'vanish') return Infinity;
   const M = fight.M; _fh.fromArray(M.meta.headPivot).applyQuaternion(M.root.quaternion).add(M.root.position);
   return Math.min(raySphere(o, d, _fh, 0.4), raySphere(o, d, _fd.set(0, 0.5 * M.meta.height, 0).add(M.root.position), 0.6));
 }
@@ -1847,7 +1850,8 @@ function fightStep(dt, time) {
     M.own.uHeadRot.value.z += M.twist * smooth(clamp((k - 0.4) / 0.5, 0, 1)); M.own.uHeadRot.value.y += M.hang * smooth(k); // the neck goes over as it comes through
     if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar, NL.fight.shotRoar); buzz(250); } // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
   } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
-    const G = F.gait, L = F.leap, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
+    if (M.id === 'm5' && lamp.level <= F.shadowLight) { fight.phase = 'vanish'; fight.t = 0; sound.whoosh(); buzz(80); return; } // 사용자: 그림자는 랜턴을 꺼야 없어짐 (총으로는 안 죽음)
+    const G = F.gait, L = F.leap, still = false, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
     _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(); _fd.normalize();
     if (dist <= (leaper ? L.from : L.tallFrom)) { // close enough: it springs (no stopping first)
       fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0;
@@ -1877,7 +1881,11 @@ function fightStep(dt, time) {
   } else if (fight.phase === 'pushed') { // knocked back by the shot, then a moment's stagger
     const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k); M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang;
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
-    if (fight.t >= 0.15 + F.stagger) { fight.phase = 'walk'; fight.t = 0; }
+    if (fight.t >= 0.15 + (fight.stagger ?? F.stagger)) { fight.phase = 'walk'; fight.t = 0; }
+  } else if (fight.phase === 'vanish') { // the shadow, the light gone: it comes apart like smoke and is gone for the night
+    const k = clamp(fight.t / F.shadow.vanish, 0, 1); M.own.uAppear.value = 1 - smooth(k); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 6, dt);
+    M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang; fight.pos.y = groundH(fight.pos.x, fight.pos.z) + 0.15 * k;
+    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
     const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0;
     if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
@@ -2752,6 +2760,7 @@ if (DEBUG) {
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
     maskOn: () => finalPass.uniforms.uMaskOn.value,
+    lampOut: () => goOut('hand'), lampLevel: () => +lamp.level.toFixed(2),
     music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, twists: sound.twists?.length ?? 0, gun: !!sound.gunBuf, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
     mooNow: () => { if (sound.mooAt) sound.mooAt = sound.ctx.currentTime; },
     monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
