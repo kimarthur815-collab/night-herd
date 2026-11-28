@@ -90,3 +90,31 @@ x = at(n, crack(0.03, 12000, 51), 0) * 1.0 + at(n, blast(0.5, 0.06, 80, 8000, 52
 x = echoes(x, [(0.12, 0.35, 3000), (0.24, 0.15, 2000)])
 x = room(x, 1.8, 0.3, 1300, 54)
 finish('N6_영화처럼_크게_쾅', x, 2.2)
+
+# ---------------- after the user's reference (a pistol shot sound effect, 사용자: 이것처럼 좀 더 '탕') ----------------
+# what it is: a sudden edge with a 1–2.5 kHz crackle for the first 50 ms, then a dense body held for about 0.15 s, its weight
+# in 100–1000 Hz with a ringing "탕" near 330 Hz and a low push near 75 Hz, then a dark tail (under ~900 Hz) for 1.5 s
+OUT = '.tmp/gun3'; os.makedirs(OUT, exist_ok=True)
+def held(sec, hold, tau, lo, hi, seed):  # the body: noise held flat for a moment, then dying
+    t = T(sec); e = np.where(t < hold, 1.0, np.exp(-(t - hold) / tau)); return bp(noise(sec, seed), lo, hi, 2) * e * (1 - np.exp(-t / 0.002))
+def tone(sec, f, tau, drop=0.06, seed=0):  # a ringing pitch that sags a little
+    t = T(sec); ff = f * (1 - drop * (1 - np.exp(-t / 0.15))); return np.sin(2 * np.pi * np.cumsum(ff) / SR) * np.exp(-t / tau)
+def edge(seed):  # the first 50 ms: a crackle in 1–2.5 kHz on a hard edge
+    return at(int(0.06 * SR), crack(0.02, 9000, seed), 0) * 0.8 + bp(noise(0.06, seed + 1), 900, 2600, 2) * ex(0.06, 0.018) * 1.2
+def tail(x, sec, f, seed): return room(x, sec, 0.45, f, seed, pre=0.02)
+
+# S1: as close to the reference as it can be made
+def s1_dry():
+    return (at(n, edge(61), 0) * 1.6 + at(n, held(0.9, 0.13, 0.12, 110, 1300, 62), 0) * 1.3 + at(n, held(0.6, 0.05, 0.05, 1000, 6000, 65), 0) * 0.25
+            + at(n, tone(1.2, 334, 0.16, 0.05), 0) * 0.35 + at(n, tone(1.0, 168, 0.12, 0.05), 0) * 0.2 + at(n, thump(0.6, 95, 72, 0.13), 0) * 0.25)
+x = tail(lp(s1_dry(), 10000, 2), 1.6, 1700, 63)
+finish('S1_참고소리처럼_탕', x)
+# S2: more "탕": the ring stronger and a touch higher, the edge brighter, the tail shorter
+x = (at(n, edge(71), 0) * 2.0 + at(n, held(0.7, 0.09, 0.08, 120, 1500, 72), 0) * 1.1 + at(n, held(0.5, 0.04, 0.04, 1200, 7000, 75), 0) * 0.35
+     + at(n, tone(1.0, 360, 0.2, 0.07), 0) * 0.6 + at(n, tone(0.8, 720, 0.09, 0.07), 0) * 0.15 + at(n, thump(0.5, 95, 70, 0.11), 0) * 0.25)
+x = tail(lp(x, 11000, 2), 1.1, 1900, 73)
+finish('S2_더탕하게_울림세게', x)
+# S3: S1 out in the night field: the hills send it back
+x = echoes(lp(s1_dry(), 10000, 2), [(0.34, 0.28, 1800), (0.72, 0.18, 1300), (1.2, 0.12, 900), (1.8, 0.07, 700)])
+x = tail(x, 2.2, 1500, 64)
+finish('S3_참고소리처럼+들판메아리', x)
