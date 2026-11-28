@@ -1856,7 +1856,7 @@ function fightHit() {
     fight.dieLean = fight.lastLean ?? 0; if (!((fight.phase === 'walk' || fight.phase === 'stuck') && fight.heading !== undefined)) fight.heading = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
     fight.phase = 'die'; fight.t = 0; return;
   }
-  if (fight.phase === 'stuck') return; // down in the dirt after a missed leap: it takes the shot where it lies
+  if (fight.phase === 'stuck' || fight.phase === 'morph') return; // down in the dirt after a missed leap, or still coming out of the cow: it takes the shot where it is (no pushing it back out of the reveal)
   _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
   fight.stagger = shadow ? F.shadow.stagger : F.stagger;
   fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, shadow ? F.shadow.push : F.push); fight.phase = 'pushed'; fight.t = 0;
@@ -1973,7 +1973,8 @@ function fightStep(dt, time) {
     M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang; fight.pos.y = groundH(fight.pos.x, fight.pos.z) + 0.15 * k;
     if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; night.homing = true; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
-    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0; lean = (fight.dieLean ?? 0) * (1 - smooth(k));
+    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k;
+    const cw = fight.cow; if (cw?.mesh.visible) { const own = cw.mesh.material.userData.own; own.uGone.value = Math.max(own.uGone.value, smooth(k)); for (const e of cw.mon.eyes) e.material.opacity = Math.min(e.material.opacity, 1 - k); if (k >= 1) { cw.mesh.visible = false; for (const e of cw.mon.eyes) e.visible = false; } } // killed before it was all the way out: what was left of the cow goes too M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0; lean = (fight.dieLean ?? 0) * (1 - smooth(k));
     if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; night.homing = true; }
   }
   if (fight.phase !== 'eat' && !skipPlace) placeFight(bob, roll, lean);
