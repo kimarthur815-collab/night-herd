@@ -1305,7 +1305,6 @@ addEventListener('keydown', (e) => {
   if (!started) return;
   if (NIGHT_SCENE) {
     if (e.code === 'Escape') { pauseNight(); return; }
-    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && !e.repeat && !fight.on) { nextStation(); e.preventDefault(); return; }
     if (e.code === 'KeyR' && !e.repeat) { reloadGun(); return; }
     if (e.code === 'KeyE' && !e.repeat) { if (rev && rev.state.cocked) decockGun(); else nightCock(); return; }
     if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) { keys.add(e.code); e.preventDefault(); return; } // 사용자 2026-11-28: 걷기 (셀 때는 W/S 앞뒤만, 총격전에서는 WASD)
@@ -1580,13 +1579,23 @@ function revealStep() {
 // Phone: tap a cow to count it, swipe the screen to the left (like turning a page) to walk to the next place, swipe up or
 // down on the left for the lantern. PC: look with the mouse, click to count the cow in the middle of the view, D or → for
 // the next place, F and Space for the lantern. Back (phone) or Esc (PC) pauses. Values marked 임시 are in night-layout.js.
-const night = { i: 0, walking: false, t: 0, dur: 1, x0: 0, x1: 0, readyAt: Infinity, lastAct: 0, misses: 0, toldNext: false, nextHintAt: -1, finishAt: -1, endT: -1 };
+const night = { i: 0, at: 0, been: new Set([0]), walking: false, t: 0, dur: 1, x0: 0, x1: 0, readyAt: Infinity, lastAct: 0, misses: 0, toldNext: false, nextHintAt: -1, finishAt: -1, endT: -1 };
 let paused = false;
 const tapO = new THREE.Vector3(), tapD = new THREE.Vector3(), tapC = new THREE.Vector3();
 const lastStation = () => NL.stations.length - 1;
-const stationDone = (i) => cows.every((c) => c.station !== i || c.counted);
+const stationDone = (i) => cows.every((c) => c.station !== i || c.counted || c.dead || c.gone); // (one shot dead, or the thing gone, is not there to count)
 const hintCount = () => { if (!fight.on && !night.scaring) say(TOUCH ? NL.lines.count : NL.lines.countPC, 3.2); };
-const hintNext = () => say(TOUCH ? NL.lines.next : NL.lines.nextPC, 3.2);
+const allDone = () => NL.stations.every((_, i) => stationDone(i));
+// 사용자 2026-11-28: 못 찾으면 어디에 남았는지 알려 줌 — the nearest place not yet counted: here, to the left or to the right
+function hintWhere() {
+  if (fight.on || night.scaring) return;
+  let best = -1; NL.stations.forEach((st, i) => { if (!stationDone(i) && (best < 0 || Math.abs(st.x - player.pos.x) < Math.abs(NL.stations[best].x - player.pos.x))) best = i; });
+  if (best < 0) return;
+  const dx = NL.stations[best].x - player.pos.x, Ln = NL.lines;
+  if (Math.abs(dx) < NL.arrive) say(night.hereTold ? Ln.here : (TOUCH ? Ln.count : Ln.countPC), 3.2), night.hereTold = true; // (the first time: how to count; then: there is one here still)
+  else say(dx < 0 ? (TOUCH ? Ln.left : Ln.leftPC) : (TOUCH ? Ln.right : Ln.rightPC), 3.2);
+}
+const hintNext = hintWhere;
 // the herd in front of each place: a ragged front row, then thinning rows up the rise, all (mostly) facing you
 function makeNightHerd(geos) {
   let seed = NL.seed; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -1787,6 +1796,7 @@ function beginFight(c) {
   const M = c.mon.M;
   c.gone = true; ui.sub.classList.remove('show'); subTimer = 0;
   if (!M) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; return; } // not loaded (slow connection): it is simply gone
+  night.homeX = player.pos.x; night.homeZ = player.pos.z; // (the fight over, you walk back here)
   Object.assign(fight, { on: true, phase: 'morph', t: 0, hits: 0, M, endT: -1, cow: c, step: 0, aim: null, heading: undefined, dieLean: 0, landed: false });
   fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
   fight.home = c.mesh.position.clone();
@@ -2008,6 +2018,20 @@ function nextStation() {
   night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
+// 사용자 2026-11-28: 다음 자리에 다다르면 지나친 것 — you are at a place when you are this close to it (NL.arrive); come to another
+// place having been at the thing's, and it comes for you while you count there (going back does not stop it)
+function arriveAt() {
+  let at = -1; NL.stations.forEach((st, i) => { if (Math.abs(st.x - player.pos.x) < NL.arrive) at = i; });
+  let near = 0; NL.stations.forEach((st, i) => { if (Math.abs(st.x - player.pos.x) < Math.abs(NL.stations[near].x - player.pos.x)) near = i; });
+  night.i = near; // the place you are nearest (what the hints are about)
+  if (at < 0 || at === night.at) return;
+  const was = night.at; night.at = at; night.been.add(at);
+  const now = performance.now();
+  if (monster && !monster.gone && !fight.on && !night.passed && night.been.has(monster.station) && at !== monster.station && was === monster.station) {
+    night.passed = true; night.scareAt = now + rand(...NL.scare.wait) * 1000; return;
+  }
+  if (!night.passed && !night.fakeAt && Math.random() < NL.scare.fake.chance) night.fakeAt = now + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
+}
 // where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
 // 사용자 2026-11-28: you can move — counting, only a little toward the herd and back; in the gunfight, anywhere (no faster than walking);
 // when the fight is over you walk back to your place by yourself
@@ -2016,7 +2040,7 @@ function nightMove(dt) {
   let speed = 0;
   const MV = NL.move;
   if (night.homing && !night.walking) { // back to where you stand to count
-    const tx = NL.stations[night.i].x, tz = NL.standZ, dx = tx - player.pos.x, dz = tz - player.pos.z, d = Math.hypot(dx, dz);
+    const tx = night.homeX ?? NL.stations[night.i].x, tz = night.homeZ ?? NL.standZ, dx = tx - player.pos.x, dz = tz - player.pos.z, d = Math.hypot(dx, dz);
     if (d < 0.03 || (night.homeT = (night.homeT ?? 0) + dt) > 20) { night.homing = false; night.homeT = 0; player.pos.x = tx; player.pos.z = tz; player.vel.set(0, 0, 0); night.lastAct = performance.now(); }
     else {
       const v = Math.min(MV.home, d / Math.max(dt, 1e-3)); player.vel.set((dx / d) * v, 0, (dz / d) * v);
@@ -2029,9 +2053,9 @@ function nightMove(dt) {
     if (keys.has('KeyW') || keys.has('ArrowUp')) iz += 1;
     if (keys.has('KeyS') || keys.has('ArrowDown')) iz -= 1;
     iz -= joy.y;
-    if (fight.on) { if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1; if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; ix += joy.x; }
+    if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1; if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; ix += joy.x; // 사용자 2026-11-28: 셀 때도 옆으로 걸어 다음 자리로 (왼쪽으로 돌아가도 됨)
     const im = Math.hypot(ix, iz); if (im > 1) { ix /= im; iz /= im; }
-    let wx = 0, wz = -iz * MV.speed; // counting: straight toward the herd, or back
+    let wx = ix * MV.speed, wz = -iz * MV.speed; // counting: along the line of places, and toward the herd or back
     if (fight.on) { const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw); wx = (ix * cy - iz * sy) * MV.speed; wz = (-ix * sy - iz * cy) * MV.speed; } // the fight: where you look
     player.vel.x = damp(player.vel.x, wx, MV.ease, dt); player.vel.z = damp(player.vel.z, wz, MV.ease, dt);
     player.pos.x += player.vel.x * dt; player.pos.z += player.vel.z * dt;
@@ -2042,11 +2066,14 @@ function nightMove(dt) {
         if (d < m && d > 1e-4) { player.pos.x = fight.pos.x + (dx / d) * m; player.pos.z = fight.pos.z + (dz / d) * m; }
       }
     } else {
-      player.pos.x = NL.stations[night.i].x; player.vel.x = 0;
+      const x0 = NL.stations[0].x, x1 = NL.stations[lastStation()].x; // 사용자: 첫 자리에서 마지막 자리까지
+      if (player.pos.x < x0 || player.pos.x > x1) { player.pos.x = clamp(player.pos.x, x0, x1); player.vel.x = 0; }
       const z0 = NL.standZ - MV.near, z1 = NL.standZ + MV.back;
       if (player.pos.z < z0 || player.pos.z > z1) { player.pos.z = clamp(player.pos.z, z0, z1); player.vel.z = 0; }
     }
     speed = Math.hypot(player.vel.x, player.vel.z);
+    if (speed > 0.2) night.lastAct = performance.now(); // walking about is not being stuck
+    if (!fight.on) arriveAt();
   } else if (!night.walking) player.vel.set(0, 0, 0);
   if (night.walking && !night.scaring) {
     night.t += dt;
@@ -2061,7 +2088,7 @@ function nightMove(dt) {
   }
   if (TOUCH && !fight.on) { // (the fight: you look about yourself, dragging on the screen)
     let turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
-    if (night.homing) { const dx = NL.stations[night.i].x - player.pos.x, dz = NL.standZ - player.pos.z; if (Math.hypot(dx, dz) > 0.8) turn = Math.atan2(-dx, -dz); } // walking home: along the way, then the herd again
+    if (night.homing) { const dx = (night.homeX ?? NL.stations[night.i].x) - player.pos.x, dz = (night.homeZ ?? NL.standZ) - player.pos.z; if (Math.hypot(dx, dz) > 0.8) turn = Math.atan2(-dx, -dz); } // walking home: along the way, then the herd again
     const dy = Math.atan2(Math.sin(turn - player.yaw), Math.cos(turn - player.yaw)); // (the short way round)
     player.yaw += dy * (1 - Math.exp(-(night.homing ? 4 : 6) * dt)); player.pitch = damp(player.pitch, NL.look.pitch, 6, dt);
   }
@@ -2108,16 +2135,16 @@ function nightStep(dt) {
     if (now >= night.scareAt) { night.scareAt = 0; night.passed = false; beginScare(); }
   }
   if (now < night.readyAt || night.walking || night.homing) return;
-  if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
+  if (!night.toldNext && stationDone(night.i) && !allDone()) { night.toldNext = true; night.nextHintAt = now + 1700; }
   if (fight.on) return;
   if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
-  if (night.i === L && night.finishAt < 0 && stationDone(L)) night.finishAt = now + NL.endWait * 1000;
+  if (night.finishAt < 0 && allDone()) night.finishAt = now + NL.endWait * 1000; // 사용자 2026-11-28: 모든 자리를 다 세면
   if (night.finishAt > 0 && now >= night.finishAt && !night.passed && !night.scaring) {
     // the night would end here; if the thing is still standing at this last place, it was missed: it comes first, then the night ends
-    if (monster && !monster.gone && !fight.on && monster.station === L) { night.passed = true; night.endAfter = true; night.scareAt = now + rand(...NL.scare.lastWait) * 1000; return; }
+    if (monster && !monster.gone && !fight.on) { night.passed = true; night.endAfter = true; night.scareAt = now + rand(...NL.scare.lastWait) * 1000; return; }
     night.endT = 0; return;
   }
-  if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!stationDone(night.i)) hintCount(); else if (night.i < L) hintNext(); }
+  if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!allDone()) hintWhere(); }
 }
 // pause: back on a phone, Esc on a PC (also when the pointer lock or full screen is lost)
 function pauseNight() {
@@ -2213,7 +2240,6 @@ function gestureSwipe(g, dx, dy) {
     if (dy > 0) nightCock(); else decockGun();
     return;
   }
-  if (!fight.on && Math.abs(dx) > far && Math.abs(dx) > NL.swipe.ratio * Math.abs(dy)) { g.done = true; nextStation(); return; } // either way: there is no going back
 }
 
 // ---------------- holding it: pose, sway, lag, tremor, pendulum ----------------
