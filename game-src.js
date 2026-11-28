@@ -1071,7 +1071,8 @@ async function loadGunHand() {
 function cockGun() { if (started && GUN && rev && cockRevolver(rev, gunOn)) gun.t = 0; }
 function fireGun() { if (started && GUN && rev && rev.state.cocked && fireRevolver(rev, gunOn)) gun.t = 0; } // only once the hammer is back
 function reloadGun() { if (started && GUN && rev && reloadRevolver(rev, gunOn)) { gun.t = 0; return true; } return false; }
-const kickAt = (t) => (t < 0.025 ? t / 0.025 : Math.exp(-(t - 0.025) / 0.11) * (1 + 0.15 * Math.sin((t - 0.025) * 30) * Math.exp(-(t - 0.025) / 0.05)));
+const KICK = NIGHT_SCENE ? NL.gun.recoil : { flip: 0.42, back: 0.04, up: 0.014, time: 0.11 }; // 사용자: 총 반동 (밤 장면)
+const kickAt = (t) => (t < 0.025 ? t / 0.025 : Math.exp(-(t - 0.025) / KICK.time) * (1 + 0.15 * Math.sin((t - 0.025) * 30) * Math.exp(-(t - 0.025) / 0.05)));
 function gunStep(dt, time) {
   if (!rev) return;
   gun.t += dt; gun.kick += dt;
@@ -1086,7 +1087,7 @@ function gunStep(dt, time) {
   // where it points: the middle of the view, a little below it at ease
   const k = kickAt(gun.kick);
   const p = vA.copy(GUN_HOLD);
-  p.y += 0.02 * gun.aim - 0.012 * (1 - gun.aim) + 0.014 * k; p.z += 0.04 * k;
+  p.y += 0.02 * gun.aim - 0.012 * (1 - gun.aim) + KICK.up * k; p.z += KICK.back * k;
   p.x -= lagX * 0.45; p.y += lagY * 0.45;
   const gs = NIGHT_SCENE && hp < NL.hp ? lerp(1, NL.hurt.shake[Math.min(hp, NL.hurt.shake.length - 1)], hurtK) : 1; // the gun hand shakes when hurt
   p.x += Math.sin(time * 0.31 + 1.0) * 0.0012 + Math.sin(time * 9.7) * Math.sin(time * 5.3) * 0.0005 * gs;
@@ -1096,7 +1097,7 @@ function gunStep(dt, time) {
   if (NIGHT_SCENE) { gun.pointT = (gun.pointT ?? 9) + dt; gun.pointK = gun.pointT < NL.gun.point ? (gun.pointK ?? 0) : damp(gun.pointK ?? 0, 0, 4, dt); if (gun.pointK > 0.001) _ga.lerp(gunPoint, gun.pointK); }
   _gm.lookAt(p, _ga, _gup); gunPivot.quaternion.setFromRotationMatrix(_gm);
   // canted a little, so you see some of its side: the cylinder and the hammer
-  gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(0.42 * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
+  gunPivot.quaternion.multiply(_gq.setFromEuler(tmpE.set(KICK.flip * k - lagY * 0.6, GUN_TURN.yaw + lagX * 0.5, GUN_TURN.roll - lagX * 0.4)));
   gunPivot.position.copy(p);
   if (gun.reload > 0.001) { const rb = gun.reload * gun.reload * (3 - 2 * gun.reload); gunPivot.position.lerp(RELOAD_HOLD, rb); gunPivot.quaternion.slerp(RELOAD_Q, rb); }
   gunPivot.updateMatrixWorld(true);
@@ -1115,6 +1116,7 @@ function raySphere(o, d, c, r) { const ox = o.x - c.x, oy = o.y - c.y, oz = o.z 
 function shoot() {
   gun.kick = 0; gun.shots++;
   shotSound();
+  if (NIGHT_SCENE) { night.shotT = 0; night.shotYaw = (Math.random() - 0.5) * 2 * KICK.yaw; buzz(KICK.buzz); } // the view jumps with it
   _ro.copy(camera.position);
   _rd.copy(NIGHT_SCENE && shotAimed ? shotDir : fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
   shotAimed = false;
@@ -1950,6 +1952,10 @@ function nightMove(dt) {
   if (night.recoilT !== undefined) { // the body jerks back: the head snaps up and away, then settles
     night.recoilT += dt; const R = NL.scare.recoil, t = night.recoilT, r = t < 0.06 ? t / 0.06 : Math.exp(-(t - 0.06) / R.time);
     camera.rotation.x += R.pitch * r; camera.position.addScaledVector(fwd, -R.back * r); if (r < 0.01) night.recoilT = undefined;
+  }
+  if (night.shotT !== undefined) { // the shot: the view punches up (and a little to one side), then comes back down
+    night.shotT += dt; const t = night.shotT, r = t < 0.03 ? t / 0.03 : Math.exp(-(t - 0.03) / KICK.viewTime);
+    camera.rotation.x += KICK.view * r; camera.rotation.y += night.shotYaw * r; if (t > 0.05 && r < 0.01) night.shotT = undefined;
   }
   if (night.shake > 0) { const k = night.shake * 0.02; camera.position.x += (Math.random() - 0.5) * k; camera.position.y += (Math.random() - 0.5) * k; camera.rotation.z += (Math.random() - 0.5) * k * 2.5; }
   camera.updateMatrixWorld(true);
