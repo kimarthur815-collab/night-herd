@@ -640,8 +640,8 @@ class Sound {
     if (!this.ctx) return;
     const get = async (u) => { try { return await this.ctx.decodeAudioData(await (await fetch(u)).arrayBuffer()); } catch (e) { return null; } };
     this.musicG = this.ctx.createGain(); this.musicG.gain.value = NL.music.drone; this.musicG.connect(this.master);
-    const [a, b, c] = await Promise.all(NL.music.drones.concat(NL.moo.file).map(get));
-    this.drones = [a, b].filter(Boolean); this.mooBuf = c; this.droneAt = this.ctx.currentTime + 0.1; this.mooAt = this.ctx.currentTime + rand(...NL.moo.every);
+    const [a, b, c, ...tw] = await Promise.all(NL.music.drones.concat(NL.moo.file, NL.fight.twistSound.files).map(get));
+    this.drones = [a, b].filter(Boolean); this.mooBuf = c; this.twists = tw.filter(Boolean); this.droneAt = this.ctx.currentTime + 0.1; this.mooAt = this.ctx.currentTime + rand(...NL.moo.every);
   }
   mooTick(cows) { // now and then one of the cows moos (the one that is not a cow too: you can't tell it by its voice)
     if (!this.mooBuf || this.ctx.currentTime < this.mooAt) return;
@@ -1777,7 +1777,7 @@ function beginFight(c) {
   fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
   fight.home = c.mesh.position.clone();
   M.own.uAppear.value = 0; M.root.visible = true; placeFight();
-  if (msnd) msnd.gape(M.id); buzz(120); // 임시: the wet sound as it starts to come apart (기획서의 '소 울음이 일그러지는 소리'는 아직)
+  twistSound(); buzz(120); // 사용자: 소 울음이 괴물로 일그러지는 소리 (U1·U4 중 무작위), then its roar
   for (const k of cows) if (k !== c && !k.dead && !k.gone) scatter(k, fight.pos);
 }
 // standing where it is, turned to you; walking, its body lurches with each step
@@ -1785,6 +1785,11 @@ function placeFight(bob = 0, roll = 0, lean = 0) {
   const M = fight.M, at = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
   const yaw = fight.phase === 'walk' && fight.heading !== undefined ? fight.heading : at; // running: along its path
   M.root.quaternion.setFromEuler(_fe.set(lean, yaw, roll, 'YXZ')); M.root.position.copy(fight.pos); M.root.position.y += bob;
+}
+function twistSound() { // through the monster's own sound, so it runs straight into the roar after it
+  const n = msnd?.input(), list = sound.twists; if (!n || !list?.length) { if (msnd) msnd.gape(fight.M.id); return; }
+  const s = sound.ctx.createBufferSource(), g = sound.ctx.createGain(); s.buffer = list[Math.floor(Math.random() * list.length)]; g.gain.value = NL.fight.twistSound.gain;
+  s.connect(g).connect(n); s.start();
 }
 function fightHit() {
   const F = NL.fight; fight.hits++; buzz(60);
@@ -2694,7 +2699,7 @@ if (DEBUG) {
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
     maskOn: () => finalPass.uniforms.uMaskOn.value,
-    music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
+    music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, twists: sound.twists?.length ?? 0, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
     mooNow: () => { if (sound.mooAt) sound.mooAt = sound.ctx.currentTime; },
     monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },

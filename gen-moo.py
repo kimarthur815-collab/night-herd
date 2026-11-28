@@ -143,3 +143,7 @@ for c0 in [0.82, 0.9, 0.97, 1.08, 1.13]:
 U4 = U4 / np.max(np.abs(U4)) + cr * 1.4
 save('U4_목졸리듯끊기고뼈소리_으르렁', reverb(U4, 1.3, 0.2))
 print(sorted(os.listdir(OUT)))
+
+# the ones in the game (사용자: U1과 U4를 무작위로) — mono, as made above
+for src, dst in [('U1_낮게가라앉으며일그러짐', 'twist-1'), ('U4_목졸리듯끊기고뼈소리_으르렁', 'twist-2')]:
+    subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', f'{OUT}/{src}.mp3', '-ac', '1', '-af', 'loudnorm=I=-19:TP=-1.5', '-ar', '44100', '-b:a', '96k', f'sounds/{dst}.mp3'])  # both equally loud
