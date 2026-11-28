@@ -21,7 +21,9 @@
     "build:monsters": "esbuild monsters-src.js --bundle --minify --format=iife --target=es2020 --outfile=monsters/monsters.js",
     "bake:cows-lite": "node gen-cows-lite.mjs 0.0009 && node gen-cows-lite.mjs 0.003 monsters/cows-far",
     "release": "node bump-version.mjs && npm run build",
-    "stamp": "node bump-version.mjs --stamp"
+    "stamp": "node bump-version.mjs --stamp",
+    "bake:horse": "node gen-horse.mjs 0.008",
+    "build:horse": "esbuild horse-src.js --bundle --minify --format=iife --target=es2020 --outfile=horse/horse.js"
   },
   "dependencies": {
     "three": "^0.187.0"

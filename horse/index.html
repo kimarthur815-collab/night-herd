@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Night Herd · 말</title>
+<style>
+  :root { --ink: #ece4d6; --dim: #ab9f8d; --amber: #d39a4e; --panel: rgba(17, 15, 13, 0.88); }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  [hidden] { display: none !important; }
+  html, body { margin: 0; height: 100%; color: var(--ink); overflow: hidden; background: #151413;
+    font: 14px/1.45 system-ui, -apple-system, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif; }
+  #app { position: fixed; inset: 0; display: flex; flex-direction: column; }
+  #stage { flex: 1; position: relative; min-height: 0; touch-action: none; cursor: grab; }
+  canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+  #loading { position: absolute; inset: 0; display: grid; place-items: center; color: var(--dim); pointer-events: none; }
+  #hint { position: absolute; left: 10px; top: max(8px, env(safe-area-inset-top)); color: var(--dim); font-size: 12px; pointer-events: none; text-shadow: 0 1px 2px #000; }
+  footer { background: var(--panel); border-top: 1px solid rgba(255,255,255,0.08); padding: 10px 12px max(12px, env(safe-area-inset-bottom)); }
+  h1 { font: 700 17px/1.25 Georgia, "Noto Serif KR", serif; margin: 0 0 2px; }
+  .sub { color: var(--dim); font-size: 12.5px; margin: 0 0 4px; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; margin-top: 6px; }
+  .btn { font: inherit; font-weight: 700; border: 0; border-radius: 10px; padding: 9px 13px; background: #2d2925; color: var(--ink); }
+  .btn.on { outline: 1px solid var(--amber); }
+  .seg { display: inline-flex; border-radius: 10px; overflow: hidden; border: 1px solid rgba(255,255,255,0.15); }
+  .seg button { font: inherit; font-size: 13px; border: 0; padding: 8px 10px; background: transparent; color: var(--dim); }
+  .seg button.on { background: rgba(211,154,78,0.28); color: var(--ink); }
+  .note { color: var(--dim); font-size: 11.5px; margin: 8px 0 0; }
+  #ver { color: var(--dim); font-size: 11px; float: right; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="loading">불러오는 중…</div>
+    <div id="hint">끌어서 돌리기 · 두 손가락으로 확대</div>
+  </div>
+  <footer>
+    <h1>말 <span id="ver"></span></h1>
+    <p class="sub">1880년대 카우 포니(약 15핸드, 어깨높이 1.5m) · 레드 베이, 흰 블레이즈와 양말</p>
+    <div class="row">
+      <span class="seg" id="light"><button data-v="sunset" class="on">노을</button><button data-v="studio">밝게</button></span>
+      <span class="seg" id="view"><button data-v="side" class="on">옆</button><button data-v="q">비스듬히</button><button data-v="front">앞</button><button data-v="back">뒤</button><button data-v="head">머리</button><button data-v="legs">다리</button></span>
+      <button class="btn" id="spin">자동 회전</button>
+    </div>
+    <div class="row">
+      <span class="seg" id="move"><button data-v="stand" class="on">서기</button><button data-v="gallop">달리기(습보)</button></span>
+    </div>
+    <p class="note">체격과 달리는 동작의 값은 제가 고른 임시 값이에요. 털색은 레드 베이(사용자 정함).</p>
+  </footer>
+</div>
+<script src="horse.js?v=0.027"></script>
+</body>
+</html>

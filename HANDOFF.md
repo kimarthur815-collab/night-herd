@@ -1,6 +1,6 @@
 # Night Herd 인수인계 (새 대화용)
 
-마지막 갱신: 2026-11-28 오후 (v0.026). 새 대화의 Claude가 처음 읽을 요약이에요. 자세한 결정은 **기획서 사본 [docs/plan.md](docs/plan.md)** 가 기준이고, 2026-11-28부터는 이 사본을 바로 고쳐요(Claude Docs 원본은 그 뒤로 안 바뀜).
+마지막 갱신: 2026-11-28 오후 (v0.027). 새 대화의 Claude가 처음 읽을 요약이에요. 자세한 결정은 **기획서 사본 [docs/plan.md](docs/plan.md)** 가 기준이고, 2026-11-28부터는 이 사본을 바로 고쳐요(Claude Docs 원본은 그 뒤로 안 바뀜).
 
 ## 링크
 
@@ -15,14 +15,16 @@
 - 틀린 점이나 문제가 보이면 짚어요(사용자가 원함).
 - **소리는 사용자가 귀로 판단해요.** Claude는 못 들으니 후보를 만들어 **mp3로 보내고** 고르게 해요(SendUserFile). 크기는 OfflineAudioContext나 ffmpeg로 재요.
 - zip 같은 패키지 파일은 만들지 않아요. 결과는 사이트(git push)로 보여 줘요.
-- **버전**: 사이트에 올릴 때마다 `npm run release`(VERSION +0.001, 시작 화면 `v…`와 `night.js?v=…`에 적고 빌드). 지금 0.026.
+- **버전**: 사이트에 올릴 때마다 `npm run release`(VERSION +0.001, 시작 화면 `v…`와 `night.js?v=…`에 적고 빌드). 지금 0.027. 말 페이지는 `npm run build:horse`도 따로.
 - 큰 작업은 단계가 끝날 때마다 "약 몇 %" 진행 메시지를 보내요.
 - 조잡한 2D 애니메이션(화면 덮는 이빨 그림 등)은 넣지 않아요.
 - 커밋 끝에 Co-Authored-By / Claude-Session 줄을 붙여 왔어요(그 세션의 안내를 따름).
 
 ## 게임 개요
 
-**(2026-11-28 사용자) 게임의 중심은 카우보이 삶 체험이고 공포(밤)는 일부.** 게임은 마을에서 시작. 다음 작업: 메인 화면(카우보이가 석양 속에 말 타고 달림) — 사용자가 레퍼런스를 줄 예정.
+**(2026-11-28 사용자) 게임의 중심은 카우보이 삶 체험이고 공포(밤)는 일부.** 게임은 마을에서 시작. **배경은 북부 애리조나(콜로라도 고원)로 옮김** — 남부 식물(사와로 등)은 바꿔야 함. 메인 화면: 카우보이가 석양 속을 말 타고 달림(레퍼런스는 기획서), 제목 위·시작 아래, 말은 제자리에서 달리고 카메라가 나란히.
+
+**말 (진행 중, 사이트 horse/)**: 사용자가 준 말 에셋 시트 느낌으로 최대한 고퀄. 레드 베이 + 흰 블레이즈·양말. `horse.js`(모양: 몸통·다리 로프트 표, 목 로프트, 머리 부품, 털 다발 Lock; 뼈대 `horseBones()`; `skin()` 가중치; `regions()` 색 영역; 메셔) → `npm run bake:horse`(8mm, 약 13만 정점·26만 삼각형, 6.3MB) → `npm run build:horse`(horse-src.js → horse/horse.js: SkinnedMesh, 털색 셰이더, 습보 `gallopPose` + 다리 역기구학 `solveLeg`, 땅이 흘러감). 헤드리스 확인: `horse/#debug`에서 `__horse.setView/setLight/at(t)/hooves()/normals(true)/flat(true)/turn(bone,x,y,z)`. 다음: 사용자 확인 → 안장·굴레·가슴띠 → 카우보이 → 메인 화면. 게임에 쓸 가벼운 버전도 필요(지금 파일이 큼).
 
 1인칭 3D 심리 공포. 웹(Three.js r187), 목표 60fps(S25 FE). 1880년대 후반 애리조나 소노라 사막, 가을. 카우보이가 밤마다 줄 선 소를 세는데 하나가 남고, 그게 괴물. 랜턴은 왼손, 리볼버(콜트 7½″)는 오른손. 마을 3개쯤, 마지막 마을에서 괴물 현상수배지, 마지막 괴물은 죽지 않음.
 
@@ -68,6 +70,7 @@
 | `monsters-sdf.js`, `gen-monsters.mjs` | 괴물 SDF와 굽기(`npm run bake:monsters`, 다리 aLeg 포함) |
 | `cow.js`, `gen-slice.mjs`, `mesher.js` | 소 SDF·굽기, SDF→메시 |
 | `docs/plan.md` | 기획서 사본(기준 문서, 결정이 생기면 여기에 날짜와 함께 적음) |
+| `horse.js`, `gen-horse.mjs`, `horse-src.js`, `horse/` | 말 모델·굽기·미리보기 페이지(달리기 포함) |
 
 - 확인 방법: `python3 -m http.server 8770` + 헤드리스 Chrome(Playwright, SwiftShader, 약 10fps라 게임 시간이 느리게 감; 두 번 톡 같은 실제 시간 판정은 헤드리스에서 안 맞음). 터치는 CDP `Input.dispatchTouchEvent`로. `night/#debug`에서 `__dbg.*` — `stick(x,y)`, `pos()`(x, z, yaw, 돌아가는 중), `zone(x,y)`, `stickTwice()`, `faceFight()`, `mouthSpan()`, `nightState()`, `tapCow(i)`, `next()`, `shootMonster()`, `fight()`, `scaring()`, `slow(k)`(0이면 멈춤), `monMouth()`(입 가운데의 화면 위치와 거리), `mouthGlow(1)`(입 안을 초록으로), `maskOn()`, `music()`, `mooNow()`, `shootAt(x,y)`, `cock()`, `gunState()` 등.
 - 커밋 → `npm run release` → push 순서로 해 왔어요(VERSION 올리기 포함).
