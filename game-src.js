@@ -1021,6 +1021,11 @@ const gun = { t: 0, kick: 9, thumb: 0, aim: 0, shots: 0, reload: 0 };
 let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null, gunEnvMats = [];
 let MUZZLE_Z = -0.2311;
 const gunSnd = makeRevolverSound(() => sound.ctx || null, () => sound.master);
+// 사용자: 총소리는 포효처럼 크게 — the shot itself goes through the roar's own ceiling, as loud as the roar (clicks stay with the game)
+const gunBang = makeRevolverSound(() => sound.ctx || null, (a) => {
+  const n = NIGHT_SCENE && msnd?.input(); if (!n) return sound.master;
+  const g = a.createGain(); g.gain.value = NL.gun.loud; g.connect(n); return g;
+});
 const gunOn = { click: (g, f) => gunSnd.click(g, f), shot: () => shoot(), dry: () => { sound.dry(); nightDry(); }, slide: () => gunSnd.slide(), drop: () => gunSnd.drop(GAME_DROP), insert: () => gunSnd.insert() };
 // held for reloading (temporary): brought in low and rolled left in the hand, so the loading gate faces up at you
 const RELOAD_HOLD = new THREE.Vector3(0.02, -0.12, -0.28), RELOAD_Q = new THREE.Quaternion().setFromRotationMatrix((() => {
@@ -1107,7 +1112,7 @@ const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _rc = new THREE.Vect
 function raySphere(o, d, c, r) { const ox = o.x - c.x, oy = o.y - c.y, oz = o.z - c.z, b = ox * d.x + oy * d.y + oz * d.z, cc = ox * ox + oy * oy + oz * oz - r * r, h = b * b - cc; if (h < 0) return Infinity; const t = -b - Math.sqrt(h); return t > 0 ? t : Infinity; }
 function shoot() {
   gun.kick = 0; gun.shots++;
-  gunSnd.bang(GAME_SHOT);
+  gunBang.bang(GAME_SHOT);
   _ro.copy(camera.position);
   _rd.copy(NIGHT_SCENE && shotAimed ? shotDir : fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
   shotAimed = false;

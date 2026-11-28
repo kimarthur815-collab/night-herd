@@ -356,7 +356,8 @@ export function makeMonsterSound(opt = {}) {
     unlock() { if (!enabled) return; const c = ctx(); if (c && c.state !== 'running') c.resume(); },
     setEnabled(on) { enabled = on; if (!a) return; if (on) { a.resume(); } else { stopLoop(); a.suspend(); } },
     get enabled() { return enabled; },
-    sting, useFile, setRecGain(g) { recGain = g; }, setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
+    sting, useFile, setRecGain(g) { recGain = g; },
+    input() { return ctx() ? out : null; }, // other loud sounds (the gunshot) go through the same ceiling as the roar setRoarGain(g) { STUTTER.gain = g; }, get roarGain() { return STUTTER.gain; },
     ambient, gape, freeze, pounce, bite, restore, preview, previewBite, cut, snap, scream, roarRaw, prepare, useBuffer, stop: () => a && stopLoop(),
   };
 }
