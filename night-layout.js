@@ -92,6 +92,13 @@ export const NL = {
   },
   // 임시: 다쳤을 때의 신호 (체력 칸이 줄수록 셈): 심장 박동 (분당), 그 크기, 시야 가장자리 어둡기, 손 떨림 배수
   hurt: { bpm: [0, 112, 80], heart: [0, 0.5, 0.3], edge: [0, 0.75, 0.4], shake: [1, 3, 2] }, // [체력 0칸 전, 1칸, 2칸] — 3칸이면 없음
+  music: { // 사용자: BGM — 밤에는 A2·A3가 무작위로 이어지고, 괴물이 다가올 때(총 맞은 순간부터 덮치기 전까지)는 C2
+    drones: ['../sounds/bgm-drone-a2.mp3', '../sounds/bgm-drone-a3.mp3'], chase: '../sounds/bgm-chase.mp3',
+    drone: 0.3, // 드론 크기 (게임 소리 안에서, 임시)
+    chaseGain: 0.6, // 긴장 음악 크기 (임시)
+    overlap: 2.5, // 드론이 다음 곡과 겹치는 시간 (초, 곡 끝의 페이드 길이, 임시)
+    chaseLoop: [16, 24], // 긴장 음악이 끝까지 가면 되풀이할 구간 (초): 가장 빠른 부분
+  },
   letterbox: 0.09, // 사용자: 레터박스 — 위아래 검은 띠의 높이 (화면 높이의 비율, 임시). 덮칠 때는 괴물만 띠 위로 나옴
   saySecs: 1.6, // 임시: how long a counted number stays on screen ("일곱…")
   endWait: 3.5, // 임시: seconds after the last place is counted before the night fades out (stage 1 ends there)

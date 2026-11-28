@@ -634,6 +634,35 @@ class Sound {
     const t = this.ctx.currentTime, g = this.master.gain; g.cancelScheduledValues(t); g.setValueAtTime(g.value, t);
     g.setTargetAtTime(on ? 0.0001 : 0.9 * (NIGHT_SCENE ? NL.volume : 1), t, on ? 0.05 : 0.5);
   }
+  // music (사용자: 밤에는 A2·A3 드론이 무작위로 이어서, 괴물이 다가올 때는 C2 긴장 음악). Through the master, so the hush before a
+  // jumpscare silences it with everything else, and a pause stops it with the rest
+  async loadMusic() {
+    if (!this.ctx) return;
+    const get = async (u) => { try { return await this.ctx.decodeAudioData(await (await fetch(u)).arrayBuffer()); } catch (e) { return null; } };
+    this.musicG = this.ctx.createGain(); this.musicG.gain.value = NL.music.drone; this.musicG.connect(this.master);
+    this.chaseG = this.ctx.createGain(); this.chaseG.gain.value = 0; this.chaseG.connect(this.master);
+    const [a, b, c] = await Promise.all(NL.music.drones.concat(NL.music.chase).map(get));
+    this.drones = [a, b].filter(Boolean); this.chaseBuf = c; this.droneAt = this.ctx.currentTime + 0.1;
+  }
+  musicTick() { // the next drone, one of them at random, overlapping the last one's fade
+    if (!this.drones?.length || this.ctx.currentTime < this.droneAt - 1) return;
+    this.droneAt = Math.max(this.droneAt, this.ctx.currentTime + 0.05); // (the page was hidden: no pile-up)
+    const s = this.ctx.createBufferSource(); s.buffer = this.drones[Math.floor(Math.random() * this.drones.length)];
+    s.connect(this.musicG); s.start(this.droneAt); this.droneAt += s.buffer.duration - NL.music.overlap;
+  }
+  chase(on) {
+    if (!this.chaseG) return;
+    const t = this.ctx.currentTime, g = this.chaseG.gain, d = this.musicG.gain;
+    if (on && !this.chaseSrc && this.chaseBuf) {
+      const s = (this.chaseSrc = this.ctx.createBufferSource()); s.buffer = this.chaseBuf; s.loop = true; s.loopStart = NL.music.chaseLoop[0]; s.loopEnd = NL.music.chaseLoop[1];
+      s.connect(this.chaseG); s.start(t);
+      g.cancelScheduledValues(t); g.setValueAtTime(NL.music.chaseGain, t);
+      d.cancelScheduledValues(t); d.setValueAtTime(d.value, t); d.setTargetAtTime(0, t, 0.3); // the drone gives way
+    } else if (!on && this.chaseSrc) {
+      g.cancelScheduledValues(t); g.setValueAtTime(g.value, t); g.setTargetAtTime(0, t, 0.08); this.chaseSrc.stop(t + 0.6); this.chaseSrc = null;
+      d.cancelScheduledValues(t); d.setValueAtTime(d.value, t); d.setTargetAtTime(NL.music.drone, t + 1.5, 1.5); // and comes back after
+    }
+  }
   silenceCrickets() {
     if (!this.ctx) return;
     this.cricketOn = false;
@@ -641,6 +670,7 @@ class Sound {
   }
   update(cam, fwd, cows, time) {
     if (!this.ctx) return;
+    this.musicTick();
     const L = this.ctx.listener;
     if (L.positionX) { L.positionX.value = cam.x; L.positionY.value = cam.y; L.positionZ.value = cam.z; L.forwardX.value = fwd.x; L.forwardY.value = fwd.y; L.forwardZ.value = fwd.z; L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0; }
     else { L.setPosition(cam.x, cam.y, cam.z); L.setOrientation(fwd.x, fwd.y, fwd.z, 0, 1, 0); }
@@ -1746,7 +1776,7 @@ function beginFight(c) {
   Object.assign(fight, { on: true, phase: 'morph', t: 0, hits: 0, M, endT: -1, cow: c, step: 0 });
   fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
   fight.home = c.mesh.position.clone();
-  M.own.uAppear.value = 0; M.root.visible = true; placeFight();
+  M.own.uAppear.value = 0; M.root.visible = true; placeFight(); sound.chase(true);
   if (msnd) msnd.gape(M.id); buzz(120); // 임시: the wet sound as it starts to come apart (기획서의 '소 울음이 일그러지는 소리'는 아직)
   for (const k of cows) if (k !== c && !k.dead && !k.gone) scatter(k, fight.pos);
 }
@@ -1759,7 +1789,7 @@ function placeFight(bob = 0, roll = 0, lean = 0) {
 function fightHit() {
   const F = NL.fight; fight.hits++; buzz(60);
   if (msnd) msnd.gape(fight.M.id);
-  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; return; }
+  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; sound.chase(false); return; }
   _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
   fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, F.push); fight.phase = 'pushed'; fight.t = 0;
 }
@@ -1803,7 +1833,7 @@ function fightStep(dt, time) {
     const G = F.gait, L = F.leap, still = M.id === 'm5' && lamp.level > F.shadowLight, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
     _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(); _fd.normalize();
     if (dist <= (leaper ? L.from : L.tallFrom)) { // close enough: it springs (no stopping first)
-      fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0;
+      fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0; sound.chase(false); // the pounce: the music stops dead, the roar takes over
       startEat(M, { leap: leaper ? L : null, run: true, d: F.face }); return;
     }
     fight.stumbleIn = (fight.stumbleIn ?? rand(...G.stumble)) - dt;
@@ -2593,6 +2623,7 @@ ui.startBtn.addEventListener('click', () => {
   if (ui.hint) setTimeout(() => ui.hint.classList.add('gone'), 9000);
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
   if (NIGHT_SCENE) {
+    sound.loadMusic();
     if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); if (monster) msnd.useFile(MONSTERS[monster.mon.form].roar, `../sounds/roar-${monster.mon.form}.mp3`); } // the chosen recording (사용자: ③=03, ④=05, ⑤=07)
     history.pushState({ nh: 1 }, ''); // so that back pauses instead of leaving
     setTimeout(() => say(NL.lines.open, 3.6), 1200);
@@ -2663,6 +2694,7 @@ if (DEBUG) {
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
     maskOn: () => finalPass.uniforms.uMaskOn.value,
+    music: () => ({ drones: sound.drones?.length ?? 0, chaseBuf: !!sound.chaseBuf, chase: !!sound.chaseSrc, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), chaseG: +(sound.chaseG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1) }),
     monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
     slow: (k) => { dbgTime = k; },
