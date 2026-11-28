@@ -199,11 +199,11 @@ function cowMaterial(coat, face, phase) {
   return m;
 }
 
-async function loadVariants(onProgress) {
-  const meta = await (await fetch('cows/cows.json')).json();
+async function loadVariants(onProgress, base = '', list = 'cows/cows.json') {
+  const meta = await (await fetch(base + list)).json();
   let done = 0;
   return Promise.all(meta.map(async (m) => {
-    const j = await (await fetch(m.file)).json();
+    const j = await (await fetch(base + m.file)).json();
     const raw = atob(j.data);
     const u8 = new Uint8Array(raw.length);
     for (let i = 0; i < raw.length; i++) u8[i] = raw.charCodeAt(i);
@@ -1586,16 +1586,6 @@ const lastStation = () => NL.stations.length - 1;
 const stationDone = (i) => cows.every((c) => c.station !== i || c.counted || c.dead || c.gone); // (one shot dead, or the thing gone, is not there to count)
 const hintCount = () => { if (!fight.on && !night.scaring) say(TOUCH ? NL.lines.count : NL.lines.countPC, 3.2); };
 const allDone = () => NL.stations.every((_, i) => stationDone(i));
-// 사용자 2026-11-28: 못 찾으면 어디에 남았는지 알려 줌 — the nearest place not yet counted: here, to the left or to the right
-function hintWhere() {
-  if (fight.on || night.scaring) return;
-  let best = -1; NL.stations.forEach((st, i) => { if (!stationDone(i) && (best < 0 || Math.abs(st.x - player.pos.x) < Math.abs(NL.stations[best].x - player.pos.x))) best = i; });
-  if (best < 0) return;
-  const dx = NL.stations[best].x - player.pos.x, Ln = NL.lines;
-  if (Math.abs(dx) < NL.arrive) say(night.hereTold ? Ln.here : (TOUCH ? Ln.count : Ln.countPC), 3.2), night.hereTold = true; // (the first time: how to count; then: there is one here still)
-  else say(dx < 0 ? (TOUCH ? Ln.left : Ln.leftPC) : (TOUCH ? Ln.right : Ln.rightPC), 3.2);
-}
-const hintNext = hintWhere;
 // the herd in front of each place: a ragged front row, then thinning rows up the rise, all (mostly) facing you
 function makeNightHerd(geos) {
   let seed = NL.seed; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
@@ -1608,7 +1598,7 @@ function makeNightHerd(geos) {
     for (let k = 0; k < 10; k++) { yaw = face + (k < 9 ? (r() - 0.5) * 2 * NL.front.turn : 0); if (!clash(circles(x, z, yaw, s))) break; } // turned too far into a neighbour: try again, at last face straight
     placed.push(circles(x, z, yaw, s));
     const coat = lerp(NL.coat[0], NL.coat[1], r()) * (back ? NL.backDark : 1), face2 = Math.min(1, coat + 0.06 + r() * 0.1);
-    const i = cows.length, mesh = new THREE.Mesh(geos[Math.floor(r() * geos.length)], cowMaterial(coat, face2, i * 1.7));
+    const i = cows.length, v = Math.floor(r() * geos.length), mesh = new THREE.Mesh(geos[v], cowMaterial(coat, face2, i * 1.7));
     // on the rise a cow leans with the ground: front and back hooves on it
     // (only part of the slope: the legs take the rest, so the head stays up; the front hooves stay on the ground)
     const fx = Math.sin(yaw) * 0.9, fz = Math.cos(yaw) * 0.9, hf = groundH(x + fx, z + fz);
@@ -1617,14 +1607,15 @@ function makeNightHerd(geos) {
     mesh.scale.setScalar(s); scene.add(mesh); mesh.updateMatrixWorld(true);
     const blockers = [0.55, 0.0, -0.6].map((lz) => { const p = new THREE.Vector3(0, 0, lz * 0.92).applyMatrix4(mesh.matrixWorld); return { x: p.x, z: p.z, r: 0.37 * s }; });
     cows.push({
-      mesh, s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(), station: si, y0: y, back, eyeWorld: new THREE.Vector3(), noseWorld: new THREE.Vector3(),
+      mesh, v, lod: 0, s, phase: i * 1.7, blockers, counted: false, lit: 0, staring: false, headWorld: new THREE.Vector3(), station: si, y0: y, back, eyeWorld: new THREE.Vector3(), noseWorld: new THREE.Vector3(),
       aimPoints: [], heading: yaw, speed: 0, gait: 0, gaitPhase: Math.random(), alarm: 0, turnVel: 0, turnLead: 0, wx: 0, wz: 0,
       stir: 0, stirGoal: 0, press: 0, pdx: 0, pdz: 0, shoveX: 0, shoveZ: 0, caps: null, startle: 0, dead: false,
       ai: { t: rand(0, 3), yaw: 0, pitch: 0, tYaw: 0, tPitch: 0, flick: 0, graze: false },
     });
   };
   NL.stations.forEach((st, si) => {
-    const n0 = st.rows[0], gaps = Array.from({ length: n0 - 1 }, () => lerp(NL.front.gap[0], NL.front.gap[1], r()));
+    const n0 = st.rows[0] + monAt.filter((a) => a === si).length, gaps = Array.from({ length: n0 - 1 }, () => lerp(NL.front.gap[0], NL.front.gap[1], r()));
+    const span = gaps.reduce((a, b) => a + b, 0); if (span > NL.front.span) for (let k = 0; k < gaps.length; k++) gaps[k] *= NL.front.span / span; // (no further across than this, or it runs into the next place's cows)
     let x = st.x - gaps.reduce((a, b) => a + b, 0) / 2, row = [], zRow = NL.front.z;
     for (let k = 0; k < n0; k++) { row.push(x); add(si, x, NL.front.z + (r() - 0.5) * NL.front.jitterZ, false); x += gaps[k] || 0; }
     // each row behind stands in the gaps of the row in front of it as seen from where you stand, so its heads show between theirs
@@ -1639,6 +1630,7 @@ function makeNightHerd(geos) {
 }
 // a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, lantern lit or not
 function nightTap(nx, ny, finger) {
+  return; // 사용자 2026-11-28: 세는 동작은 뺌 (소 사이에서 이상한 것을 걸러냄)
   if (fight.on || night.homing) return;
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
@@ -1678,15 +1670,24 @@ function nearOnScreen(nx, ny) {
 // ---------------- the one too many (stage 2): a thing among the cows, given away by one of the clues ----------------
 // ① eyes too high, ② eyes too far apart, ④ eyes with no body, ⑦ three eyes. It takes one cow's place; its own cow eyes are
 // put out and its eyes are drawn as glints that catch the lantern like a cow's do (and shine in the dark like theirs).
-let monster = null;
+let monster = null; // (the first still standing, for the debug helpers)
+const monsters = []; // 사용자 2026-11-28: 첫날 밤 1~2마리
+const pending = () => monsters.some((c) => c.scareAt);
+const firstMon = () => monsters.find((c) => !c.gone) ?? monsters[0] ?? null;
 const glintTex = (() => { const c = document.createElement('canvas'); c.width = c.height = 64; const x = c.getContext('2d'), g = x.createRadialGradient(32, 32, 0, 32, 32, 32);
   g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(0.25, 'rgba(255,255,255,0.9)'); g.addColorStop(0.5, 'rgba(255,255,255,0.18)'); g.addColorStop(1, 'rgba(255,255,255,0)');
   x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c); })();
-function makeMonster() {
+// how many tonight (사용자: 첫날 밤 1~2마리), and at which places: each one stands in an extra place in the front row there,
+// so the real cows stay as many as the cowboy says (debug: ?n=2, ?at=1)
+const Q = new URLSearchParams(location.search);
+const monCount = DEBUG && +Q.get('n') ? +Q.get('n') : NL.monster.count[0] + Math.floor(Math.random() * (NL.monster.count[1] - NL.monster.count[0] + 1));
+const monAt = (() => { const free = NL.stations.map((_, i) => i), out = []; // (two: at two different places, so one front row does not grow too long)
+  for (let k = 0; k < monCount; k++) { if (DEBUG && Q.get('at') !== null) { out.push(+Q.get('at')); continue; } if (!free.length) free.push(...NL.stations.map((_, i) => i)); out.push(free.splice(Math.floor(Math.random() * free.length), 1)[0]); }
+  return out; })();
+function makeMonster(st) {
   const asked = +new URLSearchParams(location.search).get('clue'), M = NL.monster;
   const clue = M.clues.includes(asked) ? asked : M.clues[Math.floor(Math.random() * M.clues.length)];
-  const at = DEBUG ? new URLSearchParams(location.search).get('at') : null; // (debug: ?at=2 puts it at that place)
-  const can = cows.filter((k) => (NL.monster.anyRow || !k.back) && (at === null || k.station === +at)), c = can[Math.floor(Math.random() * can.length)];
+  const can = cows.filter((k) => (NL.monster.anyRow || !k.back) && k.station === st && !k.mon), c = can[Math.floor(Math.random() * can.length)];
   c.mesh.material.userData.own.uEyeOff.value = 1;
   if (clue === 4) c.mesh.visible = false; // no body
   const eyes = [0, 1, 2].map(() => { const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: glintTex, blending: THREE.AdditiveBlending, depthWrite: false, transparent: true, fog: false }));
@@ -1694,13 +1695,25 @@ function makeMonster() {
   eyes[2].visible = clue === 7;
   const askedForm = DEBUG ? new URLSearchParams(location.search).get('form') : null; // (debug: ?form=m5)
   const forms = NL.scare.forms[clue], form = askedForm && MONSTERS[askedForm] ? askedForm : forms[Math.floor(Math.random() * forms.length)];
-  c.mon = { clue, eyes, form, M: null }; monster = c;
+  c.mon = { clue, eyes, form, M: null }; monsters.push(c); monster = firstMon();
   loadMonster(`../monsters/data/${form}.json`, form, U.uTime).then((M) => { M.twist = (Math.random() < 0.5 ? -1 : 1) * NL.fight.twist; M.hang = NL.fight.hang; c.mon.M = M; scene.add(M.root); }).catch((e) => console.warn('monster', e));
 }
 const _mr = new THREE.Vector3(), _mu = new THREE.Vector3(0, 1, 0), _mf = new THREE.Vector3();
-function monsterStep() {
-  if (!monster || monster.gone) return;
-  const c = monster, m = c.mon, M = NL.monster, u = c.mesh.material.userData.own.uPose.value;
+// 사용자 2026-11-28: 소 30마리 — near cows at full quality, the rest lighter (the monster page's cows): by distance from you,
+// with a little slack so one at the edge does not flicker between the two (NL.lod)
+const cowLod = { full: null, lite: null, far: null };
+function cowLodStep() {
+  if (!cowLod.full || !cowLod.lite || !cowLod.far) return;
+  const L = NL.lod;
+  for (const c of cows) {
+    const d = Math.hypot(c.mesh.position.x - camera.position.x, c.mesh.position.z - camera.position.z);
+    const want = d < L.full - (c.lod > 0 ? L.slack : 0) ? 0 : d < L.lite - (c.lod > 1 ? L.slack : 0) ? 1 : 2;
+    if (want !== c.lod) { c.lod = want; c.mesh.geometry = [cowLod.full, cowLod.lite, cowLod.far][want][c.v]; }
+  }
+}
+function monsterStep() { for (const c of monsters) if (!c.gone) oneMonsterStep(c); monster = firstMon(); }
+function oneMonsterStep(c) {
+  const m = c.mon, M = NL.monster, u = c.mesh.material.userData.own.uPose.value;
   const yaw = c.mesh.rotation.y + u.x + u.z; _mr.set(Math.cos(yaw), 0, -Math.sin(yaw)); // across the head
   const half = m.clue === 2 ? M.wide : M.eye, up = m.clue === 1 ? M.high : 0;
   m.eyes[0].position.copy(c.eyeWorld).addScaledVector(_mr, -half).addScaledVector(_mu, up);
@@ -1714,8 +1727,8 @@ function monsterStep() {
 // ---------------- you walked past it: it comes for you (2단계-2) ----------------
 let hp = NL.hp, msnd = null, heartNext = 0;
 const buzz = (p) => { try { navigator.vibrate && navigator.vibrate(p); } catch {} };
-function beginScare() {
-  const c = monster, M = c.mon.M;
+function beginScare(c) {
+  const M = c.mon.M; night.scareMon = c;
   c.gone = true; c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false;
   if (!M) { hurt(); return; } // not loaded yet (slow connection): it still hurts
   night.scaring = true; ui.sub.classList.remove('show'); subTimer = 0;
@@ -1723,14 +1736,14 @@ function beginScare() {
   startScare(M, new THREE.Vector3(c.mesh.position.x, c.y0, c.mesh.position.z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, Math.atan2(camera.position.x - c.mesh.position.x, camera.position.z - c.mesh.position.z), 0)), { d: NL.scare.d, travel: NL.fight.leap.forms.includes(M.id) ? undefined : NL.scare.travel, leap: NL.fight.leap.forms.includes(M.id) ? NL.fight.leap : null });
 }
 function scareFrame(dt) {
-  const M = monster && monster.mon.M;
+  const M = night.scareMon?.mon.M;
   if (!night.scaring || !M) return;
   M.own.uLightP.value.copy(lanternLight.position);
   const r = scareStep(M, camera, dt, {
     roar: () => { if (msnd) { msnd.freeze('none'); msnd.sting(NL.scare.sting); msnd.pounce(M.info.roar); } buzz(NL.scare.buzz); night.recoilT = 0; },
     cut: () => { if (msnd) { msnd.snap(); msnd.cut({ muffle: false }); } buzz(220); hurt(); }, // the roar keeps going at full in the dark
     back: () => { if (msnd) msnd.restore(); sound.hush(false); night.hushed = false; },
-    done: () => { night.scaring = false; night.shake = 0; finalPass.uniforms.uFade.value = 0; scareLight.intensity = 0; if (hp <= 0 || night.endAfter) night.endT = 0; },
+    done: () => { night.scaring = false; night.shake = 0; finalPass.uniforms.uFade.value = 0; scareLight.intensity = 0; if (hp <= 0 || (night.endAfter && !pending())) night.endT = 0; },
   });
   if (r) {
     finalPass.uniforms.uFade.value = r.fade; night.shake = r.shake * NL.scare.shake;
@@ -1742,7 +1755,7 @@ function scareFrame(dt) {
 const maskRT = new THREE.WebGLRenderTarget(2, 2, { depthBuffer: true }); maskRT.depthTexture = new THREE.DepthTexture(2, 2);
 if (NIGHT_SCENE) finalPass.uniforms.uBars.value = NL.letterbox;
 function monsterMask() {
-  const M = monster?.mon.M, on = !!M && M.root.visible && (night.scaring || (fight.on && fight.phase === 'eat')) && pouncing(M);
+  const M = night.scaring ? night.scareMon?.mon.M : fight.on && fight.phase === 'eat' ? fight.M : null, on = !!M && M.root.visible && pouncing(M);
   finalPass.uniforms.uMaskOn.value = on ? 1 : 0;
   if (!on) return;
   const w = Math.max(2, finalPass.uniforms.uRes.value.x >> 1), h = Math.max(2, finalPass.uniforms.uRes.value.y >> 1);
@@ -1778,7 +1791,7 @@ function nightShoot(nx, ny) {
 }
 function nightCock() {
   if (!rev || night.scaring || paused || ended) return;
-  cockGun(); night.lastAct = performance.now();
+  cockGun(); night.lastAct = performance.now(); night.everCocked = true;
   if (!night.toldFire) { night.toldFire = true; setTimeout(() => say(TOUCH ? NL.lines.fire : NL.lines.firePC, 3.4), 500); }
 }
 // 임시: the hammer let down again by hand (a tap counts again instead of shooting)
@@ -1886,7 +1899,7 @@ function fightStep(dt, time) {
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
     M.own.uHeadRot.value.z += M.twist * smooth(clamp((k - 0.4) / 0.5, 0, 1)); M.own.uHeadRot.value.y += M.hang * smooth(k); // the neck goes over as it comes through
     if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar, NL.fight.shotRoar); buzz(250);
-      if (!night.toldMove) { night.toldMove = true; say(TOUCH ? NL.lines.move : NL.lines.movePC, 3.2); } } // 사용자 2026-11-28: 총격전에서는 움직일 수 있음 (처음 한 번) // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
+    } // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
   } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
     if (M.id === 'm5' && lamp.level <= F.shadowLight) { fight.phase = 'vanish'; fight.t = 0; sound.whoosh(); buzz(80); return; } // 사용자: 그림자는 랜턴을 꺼야 없어짐 (총으로는 안 죽음)
     const G = F.gait, L = F.leap, still = false, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
@@ -2003,18 +2016,8 @@ function walkCows(dt) {
     }
   }
 }
-function nextStation() {
-  if (fight.on || night.homing) return; // 임시: no walking away from it
-  if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
-  night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
-  if (night.passed) { night.scareAt = Math.min(night.scareAt, performance.now() + 300); return; } // it is behind you: you don't get away first
-  const leaving = monster && !monster.gone && !fight.on && monster.station === night.i;
-  if (night.i === lastStation()) {
-    if (leaving) { night.passed = true; night.endAfter = true; night.scareAt = performance.now() + rand(...NL.scare.lastWait) * 1000; return; }
-    night.endT = 0; return; // 임시: going on from the last place ends the night
-  }
-  if (leaving) night.passed = true; // you leave it behind: it comes for you once you are at the next place, counting
-  if (night.fakeAt) { if (night.fakeEnd) { sound.hush(false); if (msnd) msnd.restore(); } night.fakeAt = 0; night.fakeEnd = 0; } // moving on ends a quiet that came to nothing
+function nextStation() { // (debug only now: 사용자 2026-11-28 — you walk to the next place yourself; see arriveAt)
+  if (fight.on || night.homing || !started || paused || ended || night.walking || night.endT >= 0 || night.i >= lastStation()) return;
   night.walking = true; night.t = 0; night.x0 = player.pos.x; night.x1 = NL.stations[night.i + 1].x;
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
@@ -2027,10 +2030,11 @@ function arriveAt() {
   if (at < 0 || at === night.at) return;
   const was = night.at; night.at = at; night.been.add(at);
   const now = performance.now();
-  if (monster && !monster.gone && !fight.on && !night.passed && night.been.has(monster.station) && at !== monster.station && was === monster.station) {
-    night.passed = true; night.scareAt = now + rand(...NL.scare.wait) * 1000; return;
-  }
-  if (!night.passed && !night.fakeAt && Math.random() < NL.scare.fake.chance) night.fakeAt = now + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
+  let left = false;
+  for (const c of monsters) if (!c.gone && !c.scareAt && !(fight.on && fight.cow === c) && at !== c.station && was === c.station) { c.scareAt = now + rand(...NL.scare.wait) * 1000 + (pending() ? 0 : 0); left = true; }
+  if (left) { monsters.filter((c) => c.scareAt).sort((a, b) => a.scareAt - b.scareAt).forEach((c, k, a) => { if (k) c.scareAt = Math.max(c.scareAt, a[k - 1].scareAt + 4000); }); return; } // (two: one after the other)
+  if (night.finishAt > 0 && at !== lastStation()) night.finishAt = -1;
+  if (!pending() && !night.fakeAt && Math.random() < NL.scare.fake.chance) night.fakeAt = now + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
 }
 // where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
 // 사용자 2026-11-28: you can move — counting, only a little toward the herd and back; in the gunfight, anywhere (no faster than walking);
@@ -2055,8 +2059,7 @@ function nightMove(dt) {
     iz -= joy.y;
     if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1; if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; ix += joy.x; // 사용자 2026-11-28: 셀 때도 옆으로 걸어 다음 자리로 (왼쪽으로 돌아가도 됨)
     const im = Math.hypot(ix, iz); if (im > 1) { ix /= im; iz /= im; }
-    let wx = ix * MV.speed, wz = -iz * MV.speed; // counting: along the line of places, and toward the herd or back
-    if (fight.on) { const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw); wx = (ix * cy - iz * sy) * MV.speed; wz = (-ix * sy - iz * cy) * MV.speed; } // the fight: where you look
+    const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), wx = (ix * cy - iz * sy) * MV.speed, wz = (-ix * sy - iz * cy) * MV.speed; // where you look (counting: kept to the line below)
     player.vel.x = damp(player.vel.x, wx, MV.ease, dt); player.vel.z = damp(player.vel.z, wz, MV.ease, dt);
     player.pos.x += player.vel.x * dt; player.pos.z += player.vel.z * dt;
     if (fight.on) {
@@ -2081,12 +2084,10 @@ function nightMove(dt) {
     speed = Math.abs(nx - player.pos.x) / Math.max(dt, 1e-3);
     player.pos.x = nx;
     if (k >= 1) {
-      night.walking = false; night.i++; night.lastAct = performance.now();
-      if (night.passed && !night.scareAt) night.scareAt = performance.now() + rand(...NL.scare.wait) * 1000;
-      else if (Math.random() < NL.scare.fake.chance) night.fakeAt = performance.now() + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
+      night.walking = false; night.lastAct = performance.now(); arriveAt();
     }
   }
-  if (TOUCH && !fight.on) { // (the fight: you look about yourself, dragging on the screen)
+  if (TOUCH && !fight.on && (night.homing || night.walking)) { // (otherwise you look about yourself, dragging on the screen)
     let turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
     if (night.homing) { const dx = (night.homeX ?? NL.stations[night.i].x) - player.pos.x, dz = (night.homeZ ?? NL.standZ) - player.pos.z; if (Math.hypot(dx, dz) > 0.8) turn = Math.atan2(-dx, -dz); } // walking home: along the way, then the herd again
     const dy = Math.atan2(Math.sin(turn - player.yaw), Math.cos(turn - player.yaw)); // (the short way round)
@@ -2126,25 +2127,28 @@ function nightStep(dt) {
     return;
   }
   scareFrame(dt); hurtFrame(dt);
-  if (night.fakeAt && !night.passed && !night.scaring && !paused) {
+  if (night.fakeAt && !pending() && !night.scaring && !paused) {
     if (!night.fakeEnd && now >= night.fakeAt) { night.fakeEnd = now + rand(...NL.scare.fake.quiet) * 1000; sound.hush(true); if (msnd) msnd.freeze('none'); }
     if (night.fakeEnd && now >= night.fakeEnd) { night.fakeAt = 0; night.fakeEnd = 0; sound.hush(false); if (msnd) msnd.restore(); }
   }
-  if (night.passed && night.scareAt && !night.scaring && monster && !monster.gone && !paused) {
-    if (!night.hushed && now >= night.scareAt - NL.scare.hush * 1000) { night.hushed = true; sound.hush(true); if (msnd) msnd.freeze('none'); } // everything goes quiet
-    if (now >= night.scareAt) { night.scareAt = 0; night.passed = false; beginScare(); }
+  const next = monsters.filter((c) => c.scareAt && !c.gone).sort((a, b) => a.scareAt - b.scareAt)[0];
+  if (next && !night.scaring && !fight.on && !paused) {
+    if (!night.hushed && now >= next.scareAt - NL.scare.hush * 1000) { night.hushed = true; sound.hush(true); if (msnd) msnd.freeze('none'); } // everything goes quiet
+    if (now >= next.scareAt) { next.scareAt = 0; beginScare(next); }
   }
   if (now < night.readyAt || night.walking || night.homing) return;
-  if (!night.toldNext && stationDone(night.i) && !allDone()) { night.toldNext = true; night.nextHintAt = now + 1700; }
   if (fight.on) return;
-  if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
-  if (night.finishAt < 0 && allDone()) night.finishAt = now + NL.endWait * 1000; // 사용자 2026-11-28: 모든 자리를 다 세면
-  if (night.finishAt > 0 && now >= night.finishAt && !night.passed && !night.scaring) {
-    // the night would end here; if the thing is still standing at this last place, it was missed: it comes first, then the night ends
-    if (monster && !monster.gone && !fight.on) { night.passed = true; night.endAfter = true; night.scareAt = now + rand(...NL.scare.lastWait) * 1000; return; }
+  // 사용자 2026-11-28: 오른쪽 끝(마지막 자리)에 다다르면 밤이 끝남 — stand there a moment; any thing still standing comes first
+  const atEnd = Math.abs(player.pos.x - NL.stations[lastStation()].x) < NL.arrive;
+  if (!atEnd) night.finishAt = -1; else if (night.finishAt < 0 && !night.endAfter) night.finishAt = now + NL.endWait * 1000;
+  if (night.finishAt > 0 && now >= night.finishAt && !night.scaring && !pending()) {
+    night.finishAt = -1;
+    const left = monsters.filter((c) => !c.gone);
+    if (left.length) { night.endAfter = true; left.forEach((c, k) => { c.scareAt = now + rand(...NL.scare.lastWait) * 1000 + k * 4000; }); return; }
     night.endT = 0; return;
   }
-  if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!allDone()) hintWhere(); }
+  if (night.endAfter && !pending() && !night.scaring && monsters.every((c) => c.gone)) { night.endT = 0; return; }
+  if (now - night.lastAct > NL.hint.idle * 1000) { night.lastAct = now; if (!night.everCocked) say(TOUCH ? NL.lines.cock : NL.lines.cockPC, 3.4); } // (only the how-to of the gun, until it is used)
 }
 // pause: back on a phone, Esc on a PC (also when the pointer lock or full screen is lost)
 function pauseNight() {
@@ -2224,7 +2228,7 @@ function gestureMove(e) {
     if (ui.knob) ui.knob.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
     return;
   }
-  if (g.zone === 'screen' && fight.on && canMove()) { // the fight: drag to look about
+  if (g.zone === 'screen' && canMove() && !night.homing) { // 사용자 2026-11-28: 셀 때도 화면을 끌어 둘러봄 (총격전도)
     if (g.moved) { g.look = true; const k = NL.move.look; player.yaw -= (e.clientX - g.lx) * k; player.pitch = clamp(player.pitch - (e.clientY - g.ly) * k, -1.2, 1.1); }
     g.lx = e.clientX; g.ly = e.clientY;
     return;
@@ -2454,7 +2458,7 @@ function frame(now) {
   if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
-  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); puffStep(dt); fightStep(dt, time); walkCows(dt); }
+  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); cowLodStep(); puffStep(dt); fightStep(dt, time); walkCows(dt); }
   sound.update(camera.position, fwd, cows, time);
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -2744,10 +2748,13 @@ if (NIGHT_SCENE && $('tip')) {
     let parts = 0;
     const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1 + (GUN ? 1 : 0);
     const bump = () => { parts++; if (!NIGHT_SCENE) ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; }; // (the night: a tumbleweed instead of the number)
+    // 사용자 2026-11-28: 소가 30마리 — the lighter cows of the monster page for the ones further off (cowLod)
+    const lods = NIGHT_SCENE ? Promise.all([loadVariants(() => {}, '../monsters/'), loadVariants(() => {}, '../monsters/', 'cows-far/cows.json')]).then(([a, b]) => { cowLod.lite = a; cowLod.far = b; }) : null;
     const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
       Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
       Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
       GUN ? loadGunHand().then(bump) : Promise.resolve()]);
+    if (lods) { await lods; cowLod.full = geos; }
     saguaroField = new SaguaroField(sculpts, plantClear);
     scene.add(saguaroField.group);
     brushFields = makeBrush(plantClear); // after the saguaros, so no bush grows through a trunk
@@ -2756,7 +2763,7 @@ if (NIGHT_SCENE && $('tip')) {
     for (const f of brushFields) scene.add(f.group);
     saguaroField.setPixel(camera, finalPass.uniforms.uRes.value.y);
     saguaroField.update(player.pos.x, player.pos.z, camera);
-    if (NIGHT_SCENE) { makeNightHerd(geos); makeMonster(); }
+    if (NIGHT_SCENE) { makeNightHerd(geos); for (const st of monAt) makeMonster(st); }
     else HERD.forEach((h, i) => {
       const toCamp = Math.atan2(0 - h.x, 0.5 - h.z);
       const mesh = new THREE.Mesh(geos[h.v], cowMaterial(h.coat, h.face ?? h.coat, i * 1.7));
@@ -2834,11 +2841,12 @@ ui.startBtn.addEventListener('click', () => {
   if (WITH_COUNTING) { setTimeout(() => say('열 마리. 오늘도 다 있겠지.', 3.4), 1200); countReadyAt = performance.now() + 4800; }
   if (NIGHT_SCENE) {
     sound.loadMusic();
-    if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); if (monster) msnd.useFile(MONSTERS[monster.mon.form].roar, `../sounds/roar-${monster.mon.form}.mp3`); } // the chosen recording (사용자: ③=03, ④=05, ⑤=07)
+    if (sound.ctx) { msnd = makeMonsterSound({ context: sound.ctx }); for (const c of monsters) msnd.useFile(MONSTERS[c.mon.form].roar, `../sounds/roar-${c.mon.form}.mp3`); } // the chosen recording (사용자: ③=03, ④=05, ⑤=07)
     history.pushState({ nh: 1 }, ''); // so that back pauses instead of leaving
     setTimeout(() => say(NL.lines.open, 3.6), 1200);
     night.readyAt = performance.now() + 4800; night.lastAct = night.readyAt;
-    setTimeout(() => { hintCount(); night.lastAct = performance.now(); }, 5200);
+    setTimeout(() => { say(TOUCH ? NL.lines.walk : NL.lines.walkPC, 3.4); night.lastAct = performance.now(); }, 5200); // 사용자 2026-11-28: 세기 대신 걸러내기
+    setTimeout(() => { if (!night.everCocked) say(TOUCH ? NL.lines.cock : NL.lines.cockPC, 3.4); night.lastAct = performance.now(); }, 9600);
   }
 });
 ui.resume.addEventListener('click', () => (NIGHT_SCENE ? resumeNight() : tryLock()));
@@ -2898,9 +2906,11 @@ if (DEBUG) {
     night: () => { nightT = 1; },
     // the night scene
     countStation: (i) => { for (const c of cows) if (c.station === i && !c.dead && !c.gone) { if (!c.counted) count++; c.counted = true; } }, fake: () => [night.fakeAt ? Math.round(night.fakeAt - performance.now()) : null, !!night.fakeEnd],
-    hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring, scareIn: () => night.scareAt ? Math.round(night.scareAt - performance.now()) : null, passed: () => !!night.passed,
+    hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring, scareIn: () => { const c = monsters.find((k) => k.scareAt); return c ? Math.round(c.scareAt - performance.now()) : null; }, passed: () => pending(),
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
-    monScreen: () => { const v = monster.eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+    monScreen: () => { const v = firstMon().eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+    lods: () => [0, 1, 2].map((k) => cows.filter((c) => c.lod === k).length),
+    monsters: () => monsters.map((c) => ({ i: cows.indexOf(c), st: c.station, form: c.mon.form, gone: !!c.gone, scareIn: c.scareAt ? Math.round(c.scareAt - performance.now()) : null })),
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
     maskOn: () => finalPass.uniforms.uMaskOn.value,

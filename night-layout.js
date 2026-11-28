@@ -3,19 +3,22 @@
 // World axes as in game-src.js: you look along -z, +x is to your right, y is up. The campfire is at (-1.6, 0, 1.5).
 
 export const NL = {
-  told: 11, // the number the cowboy says before the night (기획서 임시 대사 "열한 마리"); the herd really has one more
+  told: 30, // 사용자 2026-11-28: 진짜 소는 30마리 (처음 대사 "서른 마리"); 괴물이 그만큼 더 섞여 있음 (monster.count)
   standZ: 1.0, // 임시: where you stand at every place (자리), 1 m in front of the camp
   // 임시: the places you stand, left to right, a few steps apart (further from the fire each time), and the cows in front
   // of each: rows = how many in the front row, then in each row up the rise behind it (fewer further back, three at most).
   // The front rows join into one ragged line across. 6 + 3 + 3 = 12 = told + 1
+  // 사용자 2026-11-28: 자리 3곳에 10마리씩 (첫 줄 5, 뒤로 3·2). 자리 사이는 4m에서 5m로 넓힘 (임시: 4m면 첫 줄 5마리가 옆 자리 소와 겹침).
+  // 괴물은 그 자리 첫 줄에 한 칸 더 섞여 섬
   stations: [
-    { x: 0, rows: [3, 2, 1] },
-    { x: 4, rows: [2, 1] },
-    { x: 8, rows: [2, 1] },
+    { x: 0, rows: [5, 3, 2] },
+    { x: 5, rows: [5, 3, 2] },
+    { x: 10, rows: [5, 3, 2] },
   ],
   front: {
     z: -3.6, // 임시: the front row stands about 4.6 m in front of you
-    gap: [0.95, 1.5], // 임시: side-by-side spacing of the front row (centre to centre), uneven
+    gap: [0.85, 1.1], // 임시: side-by-side spacing of the front row (centre to centre), uneven (사용자 2026-11-28 소가 많아져 좁힘, 원래 0.95~1.5)
+    span: 4.2, // 임시 (사용자 2026-11-28 소 30마리): 한 자리의 첫 줄이 이보다 넓으면 좁힘 (m) — 옆 자리 소와 안 겹치게
     jitterZ: 0.7, // 임시: some a little forward, some back
     turn: 0.45, // 임시: how far a cow may be turned away from facing you (radians, either way)
   },
@@ -44,6 +47,7 @@ export const NL = {
   // 사용자 2026-11-28: 폰 스틱은 왼쪽 아래 (손가락을 대면 그 자리에 희미하게), 스틱을 두 번 톡 = 랜턴 끄기·켜기 (랜턴 들기는 없앰).
   // 임시 값: 스틱 자리 (화면 왼쪽에서 이 비율까지, 위에서 이 비율 아래부터 — 소를 톡하는 곳과 안 겹치게), 손잡이가 움직이는 반지름 (px), 두 번 톡 사이 (초)
   stick: { area: [0.36, 0.62], R: 56, dbl: 0.35 },
+  lod: { full: 7, lite: 14, slack: 0.5 }, // 임시 (사용자 2026-11-28 소 30마리): 이 거리(m) 안은 가장 좋은 소, 그다음까지는 가벼운 소, 더 멀면 아주 가벼운 소 (괴물 페이지의 소). slack: 경계에서 깜빡이지 않게
   arrive: 0.5, // 사용자 2026-11-28: 넘기기 대신 걸어서 다음 자리로 — 자리에서 이 거리 안이면 그 자리에 다다른 것 (m, 임시; 괴물을 두고 다음 자리에 다다르면 덮쳐 옴)
   hint: { idle: 12, misses: 3 }, // 임시: say the how-to line again after this many seconds doing nothing, or this many taps on nothing
   matches: 1, // 성냥: 랜턴이 꺼지면 한 번 다시 켤 수 있다 (사용자). 채우는 곳은 마을 상점 (아직 없음)
@@ -53,6 +57,7 @@ export const NL = {
   swipe: { far: 0.08, ratio: 1.2, reach: 0.07, cock: 0.75, still: 10 },
   // the one too many: a thing that is not a cow, standing among them in one of the places above (anywhere, front row or up the rise)
   monster: {
+    count: [1, 2], // 사용자 2026-11-28: 첫날 밤 괴물 1~2마리 (반반, 임시). 시험용: ?n=2
     clues: [1, 2, 4, 7], // 기획서: 첫날 밤은 ①②④⑦ 중 하나 (이 단계에서는 한 밤에 하나를 골라요). 시험용: 주소 끝에 ?clue=4
     high: 0.3, // 임시 ① 눈이 너무 높음: 소 눈 자리보다 이만큼 위 (m)
     wide: 0.25, // 임시 ② 눈 사이가 넓음: 가운데에서 한쪽 눈까지 (보통 소는 약 0.12 m)
@@ -155,26 +160,20 @@ export const NL = {
   ],
   tipEvery: 7,
   lines: { // the cowboy's lines; the brackets are the how-to
-    open: '열한 마리. 더도 말고 덜도 말고.', // 기획서 임시 대사
+    open: '서른 마리. 더도 말고 덜도 말고.', // 기획서 임시 대사 (사용자 2026-11-28: 진짜 소 수로)
     count: '하나씩 세자 (소를 톡)', // 기획서 예시
     countPC: '하나씩 세자 (소를 보고 클릭)', // 임시
-    // 사용자 2026-11-28: 못 찾으면 어디에 남았는지 알려 줌 — 가장 가까운 덜 센 자리 (대사는 모두 임시)
-    right: '오른쪽 줄을 아직 덜 셌다 (왼쪽 아래를 오른쪽으로 끌어 걷기)',
-    rightPC: '오른쪽 줄을 아직 덜 셌다 (D로 걷기)',
-    left: '왼쪽 줄을 아직 덜 셌다 (왼쪽 아래를 왼쪽으로 끌어 걷기)',
-    leftPC: '왼쪽 줄을 아직 덜 셌다 (A로 걷기)',
-    here: '이 줄에 아직 안 센 소가 있다',
     match: '성냥을 켜자 (왼쪽 아래를 두 번 톡)', // 임시: the first time the lantern goes out (사용자 2026-11-28: 스틱을 두 번 톡 = 랜턴)
     matchPC: '성냥을 켜자 (F)', // 임시
     noMatch: '성냥이 없다.', // 임시
-    cock: '…쏴야 한다 (총을 아래로 쓸어 쏠 준비)', // 임시: 센 수가 말한 수를 넘었을 때, 처음 한 번 (사용자 2026-11-28: 쏠 준비는 총에서 시작한 쓸기만)
-    cockPC: '…쏴야 한다 (오른쪽 클릭으로 쏠 준비)', // 임시
+    walk: '이상한 게 섞였는지 보자 (왼쪽 아래를 끌어 걷고, 화면을 끌어 둘러보기)', // 임시: 처음 대사 다음 (사용자 2026-11-28: 세기 대신 걸러내기)
+    walkPC: '이상한 게 섞였는지 보자 (A·D로 걷고, 마우스로 둘러보기)', // 임시
+    cock: '이상한 놈은 쏜다 (총을 아래로 쓸어 쏠 준비)', // 임시: 그다음, 그리고 총을 안 쓰고 가만있을 때 (사용자 2026-11-28: 쏠 준비는 총에서 시작한 쓸기만)
+    cockPC: '이상한 놈은 쏜다 (오른쪽 클릭으로 쏠 준비)', // 임시
     fire: '(쏠 곳을 톡, 총을 위로 쓸면 쏠 준비를 풀어요)', // 임시: 처음 공이치기를 젖혔을 때 (사용자: 화면 글에는 '공이치기' 대신 '쏠 준비')
     firePC: '(클릭하면 쏴요, 오른쪽 클릭은 쏠 준비를 풀어요)', // 임시
     reload: '빈 칸이다 (총을 꾹 눌러 장전)', // 임시: 처음 빈 칸을 당겼을 때
     reloadPC: '빈 칸이다 (R로 장전)', // 임시
-    move: '(화면을 끌어 둘러봐요)', // 임시: 총격전에서 괴물이 달려오기 시작할 때, 처음 한 번 (사용자 2026-11-28: 총격전에서는 자유롭게 움직임)
-    movePC: '(WASD로 걸어요)', // 임시
     morningTitle: '다음 날 아침', // 임시: 먹힌 뒤
     morning: '꿈이었나… (아침 장면은 아직 없어요)', // 임시
     deadTitle: '끝', // 임시: 체력이 다 닳았을 때
