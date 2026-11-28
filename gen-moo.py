@@ -92,48 +92,54 @@ save('M3_입다물고낮게음', reverb(M3, 1.0, 0.15))
 M4 = moo(2.2, [(0, 105), (0.5, 155), (1.5, 150), (2.2, 100)], [(0, 0), (0.35, 0), (0.7, 0.9), (1.7, 0.9), (2.1, 0.2)], 4)
 M4 = lp(M4, 1600); save('M4_멀리서음메', reverb(M4, 2.6, 0.5, 2, 2000), lufs=-24)
 
+# the one in the game (사용자: M3): dry and mono, the game places it at the cow
+subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-f', 'f32le', '-ar', str(SR), '-ac', '1', '-i', 'pipe:', '-af', 'loudnorm=I=-18:TP=-1.5', '-ar', '44100', '-ac', '1', '-b:a', '96k', 'sounds/moo.mp3'],
+               input=(np.concatenate([M3 / np.max(np.abs(M3)) * 0.9, np.zeros(int(0.2 * SR))]).astype('<f4')).tobytes())
+
 # ---------------- the moo that twists into the monster (2.5 s: as long as the change, the roar follows) ----------------
+# (사용자: M3로 — they all begin as M3, the low hum with the mouth shut, and the mouth tears open as it twists)
 D = 2.5; n = int(D * SR); t = np.arange(n) / SR
-OPEN = [(0, 0), (0.3, 0), (0.6, 0.8)] # the moo opens before it twists
+HUM = [(0, 85), (0.5, 105), (0.8, 103)]
+OPEN = [(0, 0), (0.75, 0.1), (1.7, 1.0)]
 def k_after(t0, t1): return np.clip((t - t0) / (t1 - t0), 0, 1)
 
-# T1: it sinks: the moo goes down past any cow, the voice breaks into a rough lower pitch, the throat grows
+# U1: it sinks: the hum goes far below any cow, the voice breaks into a rough lower pitch, the throat grows, it flutters
 k = k_after(0.7, 2.2) ** 1.6
-f0 = curve([(0, 105), (0.4, 150), (0.7, 145)], n) * (1 - 0.68 * k)
-F = cow_tract(n, OPEN); F = [(Fc * (1 - 0.45 * k), B, g) for Fc, B, g in F]
-T1 = voice(D, f0, F, 1, 11, jitter=0.012 + 0.05 * k, breath=0.08, sub=k, growl=None) * ad(n, 0.1, 0.25)
-T1 *= 1 - 0.6 * k * (0.5 + 0.5 * np.sin(2 * np.pi * np.cumsum(28 + 20 * k) / SR)) ** 2  # a flutter in the throat
-save('T1_낮게가라앉으며일그러짐', reverb(np.tanh(T1 / np.max(np.abs(T1)) * (1 + 3 * k)), 1.4, 0.22))
+f0 = curve(HUM, n) * (1 - 0.6 * k)
+F = [(Fc * (1 - 0.45 * k), B, g) for Fc, B, g in cow_tract(n, OPEN)]
+U1 = voice(D, f0, F, 1, 11, jitter=0.025 + 0.05 * k, breath=0.18, sub=0.35 + 0.65 * k, tilt=0.9, nh=45) * ad(n, 0.18, 0.25)
+U1 *= 1 - 0.6 * k * (0.5 + 0.5 * np.sin(2 * np.pi * np.cumsum(28 + 20 * k) / SR)) ** 2
+save('U1_낮게가라앉으며일그러짐', reverb(np.tanh(U1 / np.max(np.abs(U1)) * (1 + 3 * k)), 1.4, 0.22))
 
-# T2: it skips: the moo catches and repeats like a broken record, each repeat lower, then a wet gargle
-base = moo(0.9, [(0, 108), (0.3, 145), (0.9, 140)], [(0, 0), (0.3, 0), (0.6, 0.8)], 12, rough=0.15)
-T2 = np.zeros(n); T2[:len(base)] += base * ad(len(base), 0.08, 0.02)
-g0 = base[int(0.45 * SR):int(0.6 * SR)]; at = 0.9; rate = 1.0; i = 0
+# U2: it skips: the hum catches and repeats like a broken record, each repeat lower, then a wet gargle
+base = moo(0.9, HUM, [(0, 0), (0.9, 0.1)], 12, rough=0.35, breath=0.18)
+U2 = np.zeros(n); U2[:len(base)] += base * ad(len(base), 0.08, 0.02)
+g0 = base[int(0.45 * SR):int(0.62 * SR)]; at = 0.9; rate = 1.0; i = 0
 while at < 2.0:
     gr = np.interp(np.arange(0, len(g0), rate), np.arange(len(g0)), g0) * np.hanning(len(np.arange(0, len(g0), rate))) ** 0.3
-    j = int(at * SR); T2[j:j + len(gr)] += gr[:max(0, n - j)] * (0.9 + 0.3 * i / 10)
+    j = int(at * SR); U2[j:j + len(gr)] += gr[:max(0, n - j)] * (0.9 + 0.3 * i / 10)
     at += len(gr) / SR * (0.85 - 0.04 * i); rate *= 0.93; i += 1
 r = np.random.default_rng(13); gur = bp(r.standard_normal(n), 150, 900) * (0.5 + 0.5 * np.sign(np.sin(2 * np.pi * np.cumsum(18 + 14 * r.random(n)) / SR))) * k_after(1.6, 2.1)
-T2 += gur * 0.25 * np.max(np.abs(base)) / (np.max(np.abs(gur)) + 1e-9) * 1.6
-save('T2_끊겨되풀이되다꾸르륵', reverb(T2, 1.2, 0.2))
+U2 += gur * 0.25 * np.max(np.abs(base)) / (np.max(np.abs(gur)) + 1e-9) * 1.6
+save('U2_끊겨되풀이되다꾸르륵', reverb(U2, 1.2, 0.2))
 
-# T3: it splits: one moo becomes two voices, one sliding up thin, one sliding down thick, grinding against each other
+# U3: it splits: the hum becomes two voices, one sliding up thin and high, one sliding down thick, grinding together
 k = k_after(0.8, 2.3) ** 1.3
-f0a = curve([(0, 105), (0.4, 150), (0.8, 145)], n)
-A = voice(D, f0a * (1 + 0.9 * k), [(Fc * (1 + 0.5 * k), B, g) for Fc, B, g in cow_tract(n, OPEN)], 1, 21, jitter=0.012 + 0.03 * k)
-B = voice(D, f0a * (1 - 0.55 * k), [(Fc * (1 - 0.35 * k), B, g) for Fc, B, g in cow_tract(n, OPEN)], 1, 22, jitter=0.012 + 0.04 * k, sub=k * 0.8)
-T3 = (A * (1 - 0.3 * k) + B * np.minimum(1, k * 3) * 0.9) * ad(n, 0.1, 0.25)
-save('T3_두목소리로찢어짐', reverb(np.tanh(T3 / np.max(np.abs(T3)) * (1 + 2 * k)), 1.4, 0.25))
+f0a = curve(HUM, n)
+A = voice(D, f0a * (1 + 1.6 * k), [(Fc * (1 + 0.5 * k), B, g) for Fc, B, g in cow_tract(n, OPEN)], 1, 21, jitter=0.025 + 0.03 * k, breath=0.12, sub=0.3 * (1 - k), tilt=0.9, nh=45)
+B = voice(D, f0a * (1 - 0.5 * k), [(Fc * (1 - 0.35 * k), B, g) for Fc, B, g in cow_tract(n, OPEN)], 1, 22, jitter=0.025 + 0.04 * k, breath=0.12, sub=k * 0.8, tilt=0.9, nh=45)
+U3 = (A * (1 - 0.3 * k) + B * np.minimum(1, k * 3) * 0.9) * ad(n, 0.18, 0.25)
+save('U3_두목소리로찢어짐', reverb(np.tanh(U3 / np.max(np.abs(U3)) * (1 + 2 * k)), 1.4, 0.25))
 
-# T4: strangled: the moo is choked off mid-breath, bones crack, and a low wet growl comes up out of it
+# U4: strangled: the hum is choked off with a jerk upward, bones crack (우-드-득), and a low wet growl comes up out of it
 k = k_after(0.75, 1.0)
-f0 = curve([(0, 105), (0.4, 150), (0.75, 146), (1.0, 175), (1.1, 60), (2.5, 52)], n)
+f0 = curve([(0, 85), (0.5, 105), (0.75, 103), (1.0, 140), (1.1, 50), (2.5, 42)], n)
 choke = 1 - 0.85 * k_after(0.75, 0.95) + 0.85 * k_after(1.25, 2.0)
 F = [(Fc * (1 - 0.4 * k_after(1.1, 2.2)), Bw, g) for Fc, Bw, g in cow_tract(n, OPEN)]
-T4 = voice(D, f0, F, 1, 31, jitter=0.012 + 0.06 * k_after(1.1, 2), breath=0.08 + 0.2 * k_after(1.1, 2), sub=k_after(1.2, 2.2), growl=(34, 0.7 * k_after(1.2, 2.0))) * choke * ad(n, 0.1, 0.3)
+U4 = voice(D, f0, F, 1, 31, jitter=0.025 + 0.06 * k_after(1.1, 2), breath=0.18 + 0.2 * k_after(1.1, 2), sub=0.35 + 0.65 * k_after(1.2, 2.2), growl=(34, 0.7 * k_after(1.2, 2.0)), tilt=0.9, nh=45) * choke * ad(n, 0.18, 0.3)
 cr = np.zeros(n); r = np.random.default_rng(32)
-for c0 in [0.82, 0.9, 0.97, 1.08, 1.13]:  # three-part crack: 우-드-득
+for c0 in [0.82, 0.9, 0.97, 1.08, 1.13]:
     j = int(c0 * SR); m = int(0.03 * SR); cr[j:j + m] += bp(r.standard_normal(m), 900, 5000) * np.exp(-np.arange(m) / (0.004 * SR))
-T4 = T4 / np.max(np.abs(T4)) + cr * 1.4
-save('T4_목졸리듯끊기고뼈소리_으르렁', reverb(T4, 1.3, 0.2))
+U4 = U4 / np.max(np.abs(U4)) + cr * 1.4
+save('U4_목졸리듯끊기고뼈소리_으르렁', reverb(U4, 1.3, 0.2))
 print(sorted(os.listdir(OUT)))
