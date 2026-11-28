@@ -286,6 +286,14 @@ export function scareStep(M, camera, dt, on) {
   return { fade: 0, shake: u >= 1 ? 1.4 * sh + 0.3 : 0.6 };
 }
 
+// 사용자: 괴물은 덮치기 직전부터 레터박스 위로 나옴 — the bite (or the eating) has begun its last lunge at you
+export function pouncing(M) {
+  if (M.sc) return M.sc.t >= M.sc.travel * SCARE_OUT;
+  if (M.eat) return M.eat.t >= M.eat.T.snap;
+  return false;
+}
+const SCARE_OUT = 0.7; // 임시: the jumpscare comes out over the bars once it is this far through its rush (0..1)
+
 // ---------------- alive in front of you (the gunfight): breathing, a working jaw, sudden jerks of the head ----------------
 const rr = (a, b) => a + Math.random() * (b - a);
 export function idleStep(M, dt, t) {
