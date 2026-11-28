@@ -1356,6 +1356,21 @@ function lookAngles(c, worldTarget) {
   const dx = camLocal.x, dy = camLocal.y - 1.16, dz = camLocal.z - 0.98;
   return [clamp(Math.atan2(dx, dz), -1.35, 1.35), clamp(Math.atan2(dy, Math.hypot(dx, dz)), -0.6, 0.5)];
 }
+// how far each way a cow can turn its head before the head goes into another cow (looked at again now and then)
+const _hr = new THREE.Vector3();
+function headRoom(c, dt) {
+  c.yawLim ??= [-1.2, 1.2];
+  if ((c.roomT = (c.roomT ?? Math.random()) - dt) > 0) return; c.roomT = 0.8;
+  const hits = (yaw) => { _hr.set(Math.sin(yaw) * 0.75, 1.0, 0.58 + Math.cos(yaw) * 0.75).applyMatrix4(c.mesh.matrixWorld); const r = 0.26 * c.s + 0.03;
+    for (const o of cows) { if (o === c || o.dead || o.gone || !o.mesh.visible) continue; if (Math.abs(o.mesh.position.x - _hr.x) > 2.2 || Math.abs(o.mesh.position.z - _hr.z) > 2.2) continue;
+      for (const b of o.blockers) if (Math.hypot(b.x - _hr.x, b.z - _hr.z) < b.r + r) return true;
+      if (Math.hypot(o.headWorld.x - _hr.x, o.headWorld.z - _hr.z) < 0.26 * o.s + r) return true; }
+    return false; };
+  let lo = 0, hi = 0;
+  for (let a = 0.1; a <= 1.21 && !hits(a); a += 0.1) hi = a;
+  for (let a = -0.1; a >= -1.21 && !hits(a); a -= 0.1) lo = a;
+  c.yawLim[0] = lo; c.yawLim[1] = hi;
+}
 function cowStep(c, dt, time) {
   if (c.dead) { deadStep(c, dt); return; }
   const ai = c.ai;
@@ -1377,7 +1392,8 @@ function cowStep(c, dt, time) {
       if (Math.random() < 0.15) { ai.graze = true; ai.tYaw = rand(-0.35, 0.35); ai.t = rand(3, 6); }
       else { ai.graze = false; ai.tYaw = rand(-0.25, 0.25); ai.tPitch = rand(-0.15, 0.08); ai.t = rand(2.5, 6); }
     }
-    ai.yaw = damp(ai.yaw, ai.graze ? ai.tYaw : y + ai.tYaw, 1.4, dt); ai.pitch = damp(ai.pitch, ai.graze ? -1.05 : p + ai.tPitch, 1.1, dt);
+    headRoom(c, dt); const want = clamp(ai.graze ? ai.tYaw : y + ai.tYaw, c.yawLim[0], c.yawLim[1]); // 사용자 2026-11-28: 소끼리 겹침 — no turning the head into a neighbour
+    ai.yaw = damp(ai.yaw, want, 1.4, dt); ai.pitch = damp(ai.pitch, ai.graze ? -1.05 : p + ai.tPitch, 1.1, dt);
   } else {
     ai.t -= dt;
     if (ai.t <= 0) {
@@ -1590,12 +1606,15 @@ const allDone = () => NL.stations.every((_, i) => stationDone(i));
 function makeNightHerd(geos) {
   let seed = NL.seed; const r = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
   const placed = [];
-  const circles = (x, z, yaw, s) => [0.55, 0.0, -0.6].map((lz) => ({ x: x + Math.sin(yaw) * lz * 0.92, z: z + Math.cos(yaw) * lz * 0.92, r: 0.37 * s }));
-  const clash = (bs) => placed.some((q) => q.some((a) => bs.some((b) => Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r + 0.04)));
-  const add = (si, x, z, back) => {
-    const s = lerp(NL.scale[0], NL.scale[1], r()), face = Math.atan2(NL.stations[si].x - x, NL.standZ - z);
-    let yaw = face;
-    for (let k = 0; k < 10; k++) { yaw = face + (k < 9 ? (r() - 0.5) * 2 * NL.front.turn : 0); if (!clash(circles(x, z, yaw, s))) break; } // turned too far into a neighbour: try again, at last face straight
+  // the body (three circles) and the head in front of it (사용자 2026-11-28: 소끼리 겹침 — the head counts too)
+  const circles = (x, z, yaw, s) => [[0.55, 0.37], [0.0, 0.37], [-0.6, 0.37], [NL.herdGap.head, 0.26]].map(([lz, rr]) => ({ x: x + Math.sin(yaw) * lz * 0.92 * s, z: z + Math.cos(yaw) * lz * 0.92 * s, r: rr * s }));
+  const clash = (bs) => placed.some((q) => q.some((a) => bs.some((b) => Math.hypot(a.x - b.x, a.z - b.z) < a.r + b.r + NL.herdGap.room)));
+  const add = (si, x0, z0, back) => {
+    const s = lerp(NL.scale[0], NL.scale[1], r());
+    let x = x0, z = z0, face = Math.atan2(NL.stations[si].x - x, NL.standZ - z), yaw = face, ok = false;
+    for (let k = 0; k < 10 && !ok; k++) { yaw = face + (k < 9 ? (r() - 0.5) * 2 * NL.front.turn : 0); ok = !clash(circles(x, z, yaw, s)); } // turned too far into a neighbour: try again, at last face straight
+    // still in another: a step aside or back (the nearest place that is clear), facing you
+    for (let k = 1; k <= 40 && !ok; k++) { const a = k * 2.4, d = 0.06 * k; x = x0 + Math.cos(a) * d; z = z0 + Math.sin(a) * d * 0.7 - (k > 20 ? 0.03 * (k - 20) : 0); face = Math.atan2(NL.stations[si].x - x, NL.standZ - z); yaw = face; ok = !clash(circles(x, z, yaw, s)); }
     placed.push(circles(x, z, yaw, s));
     const coat = lerp(NL.coat[0], NL.coat[1], r()) * (back ? NL.backDark : 1), face2 = Math.min(1, coat + 0.06 + r() * 0.1);
     const i = cows.length, v = Math.floor(r() * geos.length), mesh = new THREE.Mesh(geos[v], cowMaterial(coat, face2, i * 1.7));
@@ -1998,7 +2017,7 @@ function walkCows(dt) {
       }
     }
     const w = c.walk; if (!w || c.dead) continue;
-    w.t += dt; const k = clamp(w.t / w.dur, 0, 1), x = lerp(w.from.x, w.to.x, smooth(k)), z = lerp(w.from.y, w.to.y, smooth(k));
+    w.t += dt; w.sep ??= new THREE.Vector2(); const k = clamp(w.t / w.dur, 0, 1), x = lerp(w.from.x, w.to.x, smooth(k)) + w.sep.x, z = lerp(w.from.y, w.to.y, smooth(k)) + w.sep.y;
     const goYaw = Math.atan2(w.to.x - w.from.x, w.to.y - w.from.y), yaw = w.keep ? w.end : k < 1 ? goYaw : (w.end ?? goYaw); // (a flinch: it backs off without turning)
     const dy = Math.atan2(Math.sin(yaw - c.heading), Math.cos(yaw - c.heading));
     c.heading += w.turn ? clamp(dy * Math.min(1, dt * 3), -w.turn * dt, w.turn * dt) : dy * Math.min(1, dt * 5); // (coming back: no faster than w.turn)
@@ -2015,6 +2034,36 @@ function walkCows(dt) {
       if (w.keep && !w.back) c.flinchIn = rand(...NL.flinch.wait); // a flinch over: after a while it comes back to its place
     }
   }
+}
+// 사용자 2026-11-28: 소끼리 겹침 — after the walking, any two whose bodies or heads are in each other are pushed apart
+// (one that is walking gives way to one standing; two of a kind share it)
+const _sa = [], _sb = [];
+function cowCircles(c, out) {
+  out.length = 0; for (const b of c.blockers) out.push(b);
+  out.push({ x: c.headWorld.x, z: c.headWorld.z, r: 0.26 * c.s });
+  return out;
+}
+function separateNightCows(dt) {
+  const live = cows.filter((c) => !c.dead && !c.gone); // (the one with no body too: no cow walks through the eyes)
+  for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) {
+    const a = live[i], b = live[j];
+    if (Math.abs(a.mesh.position.x - b.mesh.position.x) > 3.2 || Math.abs(a.mesh.position.z - b.mesh.position.z) > 3.2) continue;
+    let pen = 0;
+    for (const p of cowCircles(a, _sa)) for (const q of cowCircles(b, _sb)) pen = Math.max(pen, p.r + q.r + 0.02 - Math.hypot(p.x - q.x, p.z - q.z));
+    if (pen <= 0) continue;
+    // apart along the line between the two bodies (not between the two circles that touch: two side by side would be pushed through each other)
+    let nx = a.mesh.position.x - b.mesh.position.x, nz = a.mesh.position.z - b.mesh.position.z; const d = Math.hypot(nx, nz);
+    if (d < 1e-3) { nx = 1; nz = 0; } else { nx /= d; nz /= d; }
+    pen = Math.min(pen, 0.25); // (all of it each frame, but a deep one over a few frames)
+    const wa = a.walk ? 1 : 0, wb = b.walk ? 1 : 0, ka = wa === wb ? 0.5 : wa, kb = 1 - ka, m = pen; // (all of it, each frame: they walk slowly, so it never shows as a jump)
+    nudgeCow(a, nx * m * ka, nz * m * ka); nudgeCow(b, -nx * m * kb, -nz * m * kb);
+  }
+}
+function nudgeCow(c, dx, dz) {
+  if (!dx && !dz) return;
+  if (c.walk) { c.walk.sep ??= new THREE.Vector2(); c.walk.sep.x += dx; c.walk.sep.y += dz; }
+  c.mesh.position.x += dx; c.mesh.position.z += dz; c.mesh.updateMatrixWorld(true);
+  for (const b of c.blockers) { b.x += dx; b.z += dz; } c.headWorld.x += dx; c.headWorld.z += dz; c.eyeWorld.x += dx; c.eyeWorld.z += dz;
 }
 function nextStation() { // (debug only now: 사용자 2026-11-28 — you walk to the next place yourself; see arriveAt)
   if (fight.on || night.homing || !started || paused || ended || night.walking || night.endT >= 0 || night.i >= lastStation()) return;
@@ -2458,7 +2507,7 @@ function frame(now) {
   if (GUN && !NIGHT_SCENE) { herdStep(dt); puffStep(dt); } // by the fire the herd only moves when a shot spooks it
   for (const c of cows) cowStep(c, dt, time);
   if (WITH_COUNTING) { countStep(dt); revealStep(); }
-  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); cowLodStep(); puffStep(dt); fightStep(dt, time); walkCows(dt); }
+  if (NIGHT_SCENE) { nightStep(dt); monsterStep(); cowLodStep(); puffStep(dt); fightStep(dt, time); walkCows(dt); separateNightCows(dt); }
   sound.update(camera.position, fwd, cows, time);
   if (!NIGHT_SCENE) updateLampUI();
   if (subTimer > 0) { subTimer -= dt; if (subTimer <= 0) ui.sub.classList.remove('show'); }
@@ -2909,6 +2958,15 @@ if (DEBUG) {
     hp: () => hp, hurt: () => hurt(), scaring: () => !!night.scaring, scareIn: () => { const c = monsters.find((k) => k.scareAt); return c ? Math.round(c.scareAt - performance.now()) : null; }, passed: () => pending(),
     station: (i) => { night.i = i; player.pos.x = NL.stations[i].x; },
     monScreen: () => { const v = firstMon().eyeWorld.clone().project(camera); return [Math.round((v.x + 1) / 2 * innerWidth), Math.round((1 - v.y) / 2 * innerHeight)]; },
+    // pairs of cows whose bodies (the three circles) or heads go into each other, by how much (m)
+    overlaps: () => { const out = []; const live = cows.filter((c) => !c.dead && !c.gone);
+      for (let i = 0; i < live.length; i++) for (let j = i + 1; j < live.length; j++) { const a = live[i], b = live[j]; let worst = 0;
+        const A = [...a.blockers, { x: a.headWorld.x, z: a.headWorld.z, r: 0.24 * a.s }], B = [...b.blockers, { x: b.headWorld.x, z: b.headWorld.z, r: 0.24 * b.s }];
+        for (const p of A) for (const q of B) worst = Math.max(worst, p.r + q.r - Math.hypot(p.x - q.x, p.z - q.z));
+        if (worst > 0.05) out.push([cows.indexOf(a), cows.indexOf(b), +worst.toFixed(2), a.station, b.station, !!a.back, !!b.back]); }
+      return out.sort((x, y) => y[2] - x[2]); },
+    cowInfo: (i) => { const c = cows[i]; return { vis: c.mesh.visible, mon: !!c.mon, gone: !!c.gone, dead: !!c.dead, walk: !!c.walk, flinch: c.flinchIn ?? null, p: [+c.mesh.position.x.toFixed(2), +c.mesh.position.z.toFixed(2)], b: c.blockers.map((b) => [+b.x.toFixed(2), +b.z.toFixed(2)]), h: [+c.headWorld.x.toFixed(2), +c.headWorld.z.toFixed(2)], lim: c.yawLim }; },
+    sep: () => { const before = __dbg.overlaps().slice(0, 3); separateNightCows(0.016); return [before, __dbg.overlaps().slice(0, 3)]; },
     lods: () => [0, 1, 2].map((k) => cows.filter((c) => c.lod === k).length),
     monsters: () => monsters.map((c) => ({ i: cows.indexOf(c), st: c.station, form: c.mon.form, gone: !!c.gone, scareIn: c.scareAt ? Math.round(c.scareAt - performance.now()) : null })),
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },

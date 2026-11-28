@@ -29,6 +29,7 @@ export const NL = {
   // the rise behind the herd (괴물 후보 페이지의 언덕과 같은 모양): starts gently just behind the front row,
   // steeper from the second row; rows behind stand about 0.3, 0.8 and 1.3 m higher
   hill: { start: 1.4, top: 2.4, width: 140, depth: 30, edge: 18 },
+  herdGap: { head: 1.45, room: 0.06 }, // 임시 (사용자 2026-11-28: 소끼리 겹침) — 머리 원의 위치 (몸 가운데에서 앞으로, 몸길이 비율), 세울 때 소 사이에 남길 틈 (m)
   lean: 0.5, // 임시: a cow on the rise leans with only half the slope (the legs take the rest), so its head stays up and shows over the row in front
   coat: [0.06, 0.16], // 임시: dark cows (this renderer shows them lighter than the monster page does, so the numbers are lower); the back rows darker still
   backDark: 0.8,
