@@ -16,7 +16,7 @@ import { loadRevolver, makeRevolverEnvironments, cockRevolver, fireRevolver, upd
 import { makeRevolverSound, GAME_SHOT, GAME_DROP } from './revolver-sound.js';
 import { PLANT_PER, PLANT_U, SAGUAROS, SAGUARO_KINDS, SaguaroField, loadSculpt, makeBrush, makeGrass, tumbleweedGeometry, plantMaterial, makeDeadThings, BONE_PIECES, WIND_U } from './plants.js';
 import { NL, hillH } from './night-layout.js';
-import { loadMonster, startScare, scareStep, MONSTERS, idleStep, startEat, eatStep, mouthWorld, pouncing } from './monster-model.js';
+import { loadMonster, startScare, scareStep, MONSTERS, idleStep, startEat, eatStep, mouthWorld, mouthSpan, pouncing } from './monster-model.js';
 import { makeMonsterSound } from './monster-sound.js';
 
 const DEBUG = location.hash === '#debug';
@@ -1305,10 +1305,10 @@ addEventListener('keydown', (e) => {
   if (!started) return;
   if (NIGHT_SCENE) {
     if (e.code === 'Escape') { pauseNight(); return; }
-    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && !e.repeat) { nextStation(); e.preventDefault(); return; }
+    if ((e.code === 'KeyD' || e.code === 'ArrowRight') && !e.repeat && !fight.on) { nextStation(); e.preventDefault(); return; }
     if (e.code === 'KeyR' && !e.repeat) { reloadGun(); return; }
     if (e.code === 'KeyE' && !e.repeat) { if (rev && rev.state.cocked) decockGun(); else nightCock(); return; }
-    if (['KeyW', 'KeyA', 'KeyS', 'ArrowUp', 'ArrowDown', 'ArrowLeft'].includes(e.code)) return; // no walking about
+    if (['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) { keys.add(e.code); e.preventDefault(); return; } // 사용자 2026-11-28: 걷기 (셀 때는 W/S 앞뒤만, 총격전에서는 WASD)
   }
   if (e.code === 'KeyF') { if (!WALK && !e.repeat) lampAction(); return; }
   if (e.code === 'Space') { if (!WALK) raiseKey = true; e.preventDefault(); return; }
@@ -1334,6 +1334,7 @@ function resolveCollisions(p) {
       push(sg.x + Math.round((pc.x - sg.x) / PLANT_PER) * PLANT_PER, sg.z + Math.round((pc.y - sg.z) / PLANT_PER) * PLANT_PER, sg.r);
     }
     for (const c of cows) {
+      if (c.gone) continue; // (the night: the one that was not a cow)
       for (const b of c.blockers) push(b.x, b.z, b.r);
       push(c.headWorld.x, c.headWorld.z, 0.24 * c.s);
     }
@@ -1629,7 +1630,7 @@ function makeNightHerd(geos) {
 }
 // a tap (on a PC, a click at the middle of the view): the cow under it is counted, once, lantern lit or not
 function nightTap(nx, ny, finger) {
-  if (fight.on) return;
+  if (fight.on || night.homing) return;
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   tapO.copy(camera.position);
   tapD.set(nx, ny, 0.5).unproject(camera).sub(tapO).normalize();
@@ -1786,7 +1787,7 @@ function beginFight(c) {
   const M = c.mon.M;
   c.gone = true; ui.sub.classList.remove('show'); subTimer = 0;
   if (!M) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; return; } // not loaded (slow connection): it is simply gone
-  Object.assign(fight, { on: true, phase: 'morph', t: 0, hits: 0, M, endT: -1, cow: c, step: 0 });
+  Object.assign(fight, { on: true, phase: 'morph', t: 0, hits: 0, M, endT: -1, cow: c, step: 0, aim: null, heading: undefined, dieLean: 0, landed: false });
   fight.pos.set(c.mesh.position.x, groundH(c.mesh.position.x, c.mesh.position.z), c.mesh.position.z);
   fight.home = c.mesh.position.clone();
   M.own.uAppear.value = 0; M.root.visible = true; placeFight();
@@ -1796,7 +1797,8 @@ function beginFight(c) {
 // standing where it is, turned to you; walking, its body lurches with each step
 function placeFight(bob = 0, roll = 0, lean = 0) {
   const M = fight.M, at = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
-  const yaw = fight.phase === 'walk' && fight.heading !== undefined ? fight.heading : at; // running: along its path
+  const yaw = (fight.phase === 'walk' || fight.phase === 'stuck' || fight.phase === 'die') && fight.heading !== undefined ? fight.heading : at; // running (or down in the dirt): along its path
+  fight.lastLean = lean;
   M.root.quaternion.setFromEuler(_fe.set(lean, yaw, roll, 'YXZ')); M.root.position.copy(fight.pos); M.root.position.y += bob;
 }
 function twistSound() { // through the monster's own sound, so it runs straight into the roar after it
@@ -1808,7 +1810,11 @@ function fightHit() {
   const F = NL.fight, shadow = fight.M.id === 'm5'; buzz(60); // 사용자: 그림자는 총에 안 죽고 잠깐 멈칫만
   if (!shadow) fight.hits++;
   if (msnd) msnd.gape(fight.M.id);
-  if (fight.hits >= F.shots) { fight.phase = 'die'; fight.t = 0; return; }
+  if (fight.hits >= F.shots) { // down where it is, the way it was facing
+    fight.dieLean = fight.lastLean ?? 0; if (!((fight.phase === 'walk' || fight.phase === 'stuck') && fight.heading !== undefined)) fight.heading = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z);
+    fight.phase = 'die'; fight.t = 0; return;
+  }
+  if (fight.phase === 'stuck') return; // down in the dirt after a missed leap: it takes the shot where it lies
   _fd.copy(fight.pos).sub(camera.position).setY(0).normalize();
   fight.stagger = shadow ? F.shadow.stagger : F.stagger;
   fight.from.copy(fight.pos); fight.to.copy(fight.pos).addScaledVector(_fd, shadow ? F.shadow.push : F.push); fight.phase = 'pushed'; fight.t = 0;
@@ -1819,12 +1825,33 @@ function rayFight(o, d) {
   const M = fight.M; _fh.fromArray(M.meta.headPivot).applyQuaternion(M.root.quaternion).add(M.root.position);
   return Math.min(raySphere(o, d, _fh, 0.4), raySphere(o, d, _fd.set(0, 0.5 * M.meta.height, 0).add(M.root.position), 0.6));
 }
+const aimCam = new THREE.PerspectiveCamera(), aimView = new THREE.PerspectiveCamera(); // where you were as it sprang; what it closes on
+function leapMiss() { // it comes down where you were, carried on a little past it
+  const M = fight.M, L = NL.fight.leap, A = fight.aim;
+  M.eat = null; fight.aim = null; fight.phase = 'stuck'; fight.t = 0; fight.speed = 0; fight.landed = false;
+  _fd.copy(A.cam.position).sub(fight.pos).setY(0); if (_fd.lengthSq() < 1e-4) _fd.set(0, 0, 1); _fd.normalize();
+  fight.heading = Math.atan2(_fd.x, _fd.z);
+  fight.missFrom = (fight.missFrom ?? new THREE.Vector3()).copy(M.root.position); fight.missQ = (fight.missQ ?? new THREE.Quaternion()).copy(M.root.quaternion);
+  fight.pos.set(M.root.position.x + _fd.x * L.slide, 0, M.root.position.z + _fd.z * L.slide); fight.pos.y = groundH(fight.pos.x, fight.pos.z);
+  finalPass.uniforms.uFade.value = 0; night.shake = 0;
+}
 function fightStep(dt, time) {
   if (!fight.on) { if (fight.endT >= 0 && (fight.endT += dt) > NL.fight.back) { fight.endT = -1; for (const k of cows) if (!k.dead && !k.gone) scatterBack(k); } return; }
   const F = NL.fight, M = fight.M; fight.t += dt;
   M.own.uLightP.value.copy(lanternLight.position);
   if (fight.phase === 'eat') {
-    const r = eatStep(M, camera, dt, {
+    let cam = camera; const A = fight.aim;
+    if (A) { // 사용자 2026-11-28: 뛸 때 있던 곳을 겨누고, 공중에서는 방향을 못 바꿈 — moved far enough away by the time it comes down: it misses
+      const L = F.leap, T = M.eat.T, k = clamp((M.eat.t + dt - T.snap) / (T.lunge - T.snap), 0, 1);
+      if (!A.caught && k >= L.commit) {
+        if (Math.hypot(camera.position.x - A.cam.position.x, camera.position.z - A.cam.position.z) > L.dodge) { leapMiss(); return; }
+        A.caught = true; A.k = k;
+      }
+      const w = A.caught ? smooth(clamp((k - A.k) / Math.max(1e-3, 1 - A.k), 0, 1)) : 0; // caught: from there it closes on your face as it is now
+      A.view.position.lerpVectors(A.cam.position, camera.position, w); A.view.quaternion.slerpQuaternions(A.cam.quaternion, camera.quaternion, w); A.view.updateMatrixWorld(true);
+      cam = A.view;
+    }
+    const r = eatStep(M, cam, dt, {
       freeze: () => { if (msnd) msnd.freeze(M.info.roar); },
       roar: () => { if (msnd) msnd.pounce(M.info.roar); buzz(90); },
       black: () => { if (msnd) msnd.bite('gulp'); buzz([260, 120, 90]); hurt(); M.root.visible = false; fight.wakeT = 0; },
@@ -1839,7 +1866,7 @@ function fightStep(dt, time) {
   }
   idleStep(M, dt, time);
   const crawl = M.id === 'm3' ? F.crawl : 1;
-  let bob = 0, roll = 0, lean = 0;
+  let bob = 0, roll = 0, lean = 0, skipPlace = false;
   if (fight.phase === 'morph') { // the cow shudders and comes apart; the thing is there in its place, piece by piece
     const k = clamp(fight.t / F.morph, 0, 1), c = fight.cow;
     c.mesh.material.userData.own.uGone.value = smooth(clamp(k * 1.15, 0, 1));
@@ -1848,14 +1875,17 @@ function fightStep(dt, time) {
     M.own.uAppear.value = smooth(clamp((k - 0.15) / 0.85, 0, 1));
     M.root.scale.set(1, 0.75 + 0.25 * smooth(k), 1); night.shake = 0.25 * k;
     M.own.uHeadRot.value.z += M.twist * smooth(clamp((k - 0.4) / 0.5, 0, 1)); M.own.uHeadRot.value.y += M.hang * smooth(k); // the neck goes over as it comes through
-    if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar, NL.fight.shotRoar); buzz(250); } // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
+    if (k >= 1) { c.mesh.visible = false; for (const e of c.mon.eyes) e.visible = false; M.own.uAppear.value = 1; fight.phase = 'walk'; fight.t = 0; night.shake = 0; if (msnd) msnd.pounce(M.info.roar, NL.fight.shotRoar); buzz(250);
+      if (!night.toldMove) { night.toldMove = true; say(TOUCH ? NL.lines.move : NL.lines.movePC, 3.2); } } // 사용자 2026-11-28: 총격전에서는 움직일 수 있음 (처음 한 번) // 사용자: 총 맞은 뒤 포효는 게임 소리처럼 작게
   } else if (fight.phase === 'walk') { // it runs at you: faster and faster, leaning in, the body along its path, the head on you
     if (M.id === 'm5' && lamp.level <= F.shadowLight) { fight.phase = 'vanish'; fight.t = 0; sound.whoosh(); buzz(80); return; } // 사용자: 그림자는 랜턴을 꺼야 없어짐 (총으로는 안 죽음)
     const G = F.gait, L = F.leap, still = false, low = M.id === 'm3' ? 0.5 : 1, leaper = L.forms.includes(M.id);
     _fd.copy(camera.position).sub(fight.pos).setY(0); const dist = _fd.length(); _fd.normalize();
     if (dist <= (leaper ? L.from : L.tallFrom)) { // close enough: it springs (no stopping first)
       fight.phase = 'eat'; fight.t = 0; M.own.uStrideAmt.value = 0;
-      startEat(M, { leap: leaper ? L : null, run: true, d: F.face }); return;
+      startEat(M, { leap: leaper ? L : null, run: true, d: F.face });
+      if (leaper) { aimCam.position.copy(camera.position); aimCam.quaternion.copy(camera.quaternion); aimCam.updateMatrixWorld(true); fight.aim = { cam: aimCam, view: aimView, caught: false }; } else fight.aim = null; // where you are as it springs
+      return;
     }
     fight.stumbleIn = (fight.stumbleIn ?? rand(...G.stumble)) - dt;
     if (fight.stumbleIn < 0) { fight.stumbleIn = rand(...G.stumble); fight.stumbleT = G.stumbleTime; fight.whip = (Math.random() < 0.5 ? -1 : 1) * G.whip; }
@@ -1882,15 +1912,29 @@ function fightStep(dt, time) {
     const k = clamp(fight.t / 0.15, 0, 1); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uHeadRot.value.x += 0.4 * (1 - k); M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang;
     fight.pos.lerpVectors(fight.from, fight.to, 1 - (1 - k) ** 3); fight.pos.y = groundH(fight.pos.x, fight.pos.z); lean = -0.2 * (1 - k * 0.5);
     if (fight.t >= 0.15 + (fight.stagger ?? F.stagger)) { fight.phase = 'walk'; fight.t = 0; }
+  } else if (fight.phase === 'stuck') { // 사용자 2026-11-28: 빗나가 처박힘 — down where it aimed, nose in the dirt, still for a moment: the time to shoot
+    const L = F.leap, k = clamp(fight.t / L.land, 0, 1), e = k * k, up = smooth(clamp((fight.t - L.land - L.stuck + 0.35) / 0.35, 0, 1)); // falling, then (the last moment) getting up
+    M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 10, dt); M.own.uJaw.value = 0.12 + 0.25 * up;
+    M.own.uHeadRot.value.set(0, 0.3 * e * (1 - up), M.twist); M.own.uHeadRot.value.y += M.hang;
+    if (k < 1) {
+      _fq.setFromEuler(_fe.set(L.slam, fight.heading, 0, 'YXZ'));
+      M.root.position.lerpVectors(fight.missFrom, _fh.copy(fight.pos).setY(fight.pos.y - L.sink), e); M.root.quaternion.slerpQuaternions(fight.missQ, _fq, e); skipPlace = true;
+    } else {
+      if (!fight.landed) { fight.landed = true; sound.thud(0.5); buzz(70); }
+      night.shake = 0.4 * (1 - clamp((fight.t - L.land) / 0.25, 0, 1));
+      lean = L.slam * (1 - up); bob = -L.sink * (1 - up);
+      if (up > 0) { const to = Math.atan2(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z), d = Math.atan2(Math.sin(to - fight.heading), Math.cos(to - fight.heading)); fight.heading += d * Math.min(1, dt * 8); } // up again, round to you
+    }
+    if (fight.t >= L.land + L.stuck) { fight.phase = 'walk'; fight.t = 0; fight.speed = 0; fight.landed = false; night.shake = 0; }
   } else if (fight.phase === 'vanish') { // the shadow, the light gone: it comes apart like smoke and is gone for the night
     const k = clamp(fight.t / F.shadow.vanish, 0, 1); M.own.uAppear.value = 1 - smooth(k); M.own.uStrideAmt.value = damp(M.own.uStrideAmt.value, 0, 6, dt);
     M.own.uHeadRot.value.z += M.twist; M.own.uHeadRot.value.y += M.hang; fight.pos.y = groundH(fight.pos.x, fight.pos.z) + 0.15 * k;
-    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
+    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; night.homing = true; }
   } else if (fight.phase === 'die') { // it goes down into the dark ground
-    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0;
-    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; }
+    const k = clamp(fight.t / F.die, 0, 1); fight.pos.y = groundH(fight.pos.x, fight.pos.z) - 2.0 * k * k; M.own.uJaw.value = 0.6; M.own.uStrideAmt.value = 0; lean = (fight.dieLean ?? 0) * (1 - smooth(k));
+    if (k >= 1) { M.root.visible = false; fight.on = false; fight.endT = 0; night.shake = 0; night.homing = true; }
   }
-  if (fight.phase !== 'eat') placeFight(bob, roll, lean);
+  if (fight.phase !== 'eat' && !skipPlace) placeFight(bob, roll, lean);
 }
 // the other cows: startled, they walk off away from it; later they come back and stand where they stood
 // 사용자: 바닥이나 진짜 소를 쏘면 소 울음, 옆 소들은 살짝 놀라 살짝 뒤로 — the shot cow (or the one nearest a shot into the ground)
@@ -1950,7 +1994,7 @@ function walkCows(dt) {
   }
 }
 function nextStation() {
-  if (fight.on) return; // 임시: no walking away from it
+  if (fight.on || night.homing) return; // 임시: no walking away from it
   if (!started || paused || ended || night.walking || night.endT >= 0 || performance.now() < night.readyAt) return;
   night.lastAct = performance.now(); night.toldNext = true; night.nextHintAt = -1;
   if (night.passed) { night.scareAt = Math.min(night.scareAt, performance.now() + 300); return; } // it is behind you: you don't get away first
@@ -1965,8 +2009,45 @@ function nextStation() {
   night.dur = Math.abs(night.x1 - night.x0) / NL.walk.speed;
 }
 // where you stand and look: a phone holds the view on the herd (turned a little toward where you walk while walking)
+// 사용자 2026-11-28: you can move — counting, only a little toward the herd and back; in the gunfight, anywhere (no faster than walking);
+// when the fight is over you walk back to your place by yourself
+const canMove = () => started && !paused && !ended && !night.scaring && night.endT < 0 && performance.now() >= night.readyAt && !(fight.on && fight.phase === 'eat' && !(fight.aim && !fight.aim.caught)); // (in the air it has not got you yet)
 function nightMove(dt) {
   let speed = 0;
+  const MV = NL.move;
+  if (night.homing && !night.walking) { // back to where you stand to count
+    const tx = NL.stations[night.i].x, tz = NL.standZ, dx = tx - player.pos.x, dz = tz - player.pos.z, d = Math.hypot(dx, dz);
+    if (d < 0.03 || (night.homeT = (night.homeT ?? 0) + dt) > 20) { night.homing = false; night.homeT = 0; player.pos.x = tx; player.pos.z = tz; player.vel.set(0, 0, 0); night.lastAct = performance.now(); }
+    else {
+      const v = Math.min(MV.home, d / Math.max(dt, 1e-3)); player.vel.set((dx / d) * v, 0, (dz / d) * v);
+      player.pos.x += player.vel.x * dt; player.pos.z += player.vel.z * dt;
+      if (d > 0.5 && night.homeT < 8) resolveCollisions(player.pos); // (round the cows on the way; never stuck for long)
+      speed = v;
+    }
+  } else if (!night.walking && canMove()) {
+    let ix = 0, iz = 0;
+    if (keys.has('KeyW') || keys.has('ArrowUp')) iz += 1;
+    if (keys.has('KeyS') || keys.has('ArrowDown')) iz -= 1;
+    iz -= joy.y;
+    if (fight.on) { if (keys.has('KeyD') || keys.has('ArrowRight')) ix += 1; if (keys.has('KeyA') || keys.has('ArrowLeft')) ix -= 1; ix += joy.x; }
+    const im = Math.hypot(ix, iz); if (im > 1) { ix /= im; iz /= im; }
+    let wx = 0, wz = -iz * MV.speed; // counting: straight toward the herd, or back
+    if (fight.on) { const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw); wx = (ix * cy - iz * sy) * MV.speed; wz = (-ix * sy - iz * cy) * MV.speed; } // the fight: where you look
+    player.vel.x = damp(player.vel.x, wx, MV.ease, dt); player.vel.z = damp(player.vel.z, wz, MV.ease, dt);
+    player.pos.x += player.vel.x * dt; player.pos.z += player.vel.z * dt;
+    if (fight.on) {
+      resolveCollisions(player.pos);
+      if (fight.phase !== 'eat' && fight.phase !== 'die' && fight.phase !== 'vanish') { // 임시: you cannot walk through it (a circle this wide, m)
+        const dx = player.pos.x - fight.pos.x, dz = player.pos.z - fight.pos.z, d = Math.hypot(dx, dz), m = NL.move.body;
+        if (d < m && d > 1e-4) { player.pos.x = fight.pos.x + (dx / d) * m; player.pos.z = fight.pos.z + (dz / d) * m; }
+      }
+    } else {
+      player.pos.x = NL.stations[night.i].x; player.vel.x = 0;
+      const z0 = NL.standZ - MV.near, z1 = NL.standZ + MV.back;
+      if (player.pos.z < z0 || player.pos.z > z1) { player.pos.z = clamp(player.pos.z, z0, z1); player.vel.z = 0; }
+    }
+    speed = Math.hypot(player.vel.x, player.vel.z);
+  } else if (!night.walking) player.vel.set(0, 0, 0);
   if (night.walking && !night.scaring) {
     night.t += dt;
     const k = Math.min(1, night.t / night.dur), nx = lerp(night.x0, night.x1, smooth(k));
@@ -1978,15 +2059,17 @@ function nightMove(dt) {
       else if (Math.random() < NL.scare.fake.chance) night.fakeAt = performance.now() + rand(...NL.scare.wait) * 1000; // now and then the quiet comes, and nothing with it
     }
   }
-  if (TOUCH) {
-    const turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
-    player.yaw = damp(player.yaw, turn, 6, dt); player.pitch = damp(player.pitch, NL.look.pitch, 6, dt);
+  if (TOUCH && !fight.on) { // (the fight: you look about yourself, dragging on the screen)
+    let turn = night.walking ? -NL.walk.turn * Math.sqrt(Math.sin(Math.PI * Math.min(1, night.t / night.dur))) : 0;
+    if (night.homing) { const dx = NL.stations[night.i].x - player.pos.x, dz = NL.standZ - player.pos.z; if (Math.hypot(dx, dz) > 0.8) turn = Math.atan2(-dx, -dz); } // walking home: along the way, then the herd again
+    const dy = Math.atan2(Math.sin(turn - player.yaw), Math.cos(turn - player.yaw)); // (the short way round)
+    player.yaw += dy * (1 - Math.exp(-(night.homing ? 4 : 6) * dt)); player.pitch = damp(player.pitch, NL.look.pitch, 6, dt);
   }
   const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw), prevPhase = player.stepPhase;
   player.stepPhase += dt * speed * 4.4;
   if (Math.floor(prevPhase / Math.PI) !== Math.floor(player.stepPhase / Math.PI) && speed > 0.3) sound.step();
   const bobA = clamp(speed / 1.5, 0, 1);
-  camera.position.set(player.pos.x + Math.cos(player.stepPhase) * 0.012 * bobA * cy, EYE_H + dbgEyeUp + Math.abs(Math.sin(player.stepPhase)) * 0.025 * bobA, player.pos.z - Math.cos(player.stepPhase) * 0.012 * bobA * sy);
+  camera.position.set(player.pos.x + Math.cos(player.stepPhase) * 0.012 * bobA * cy, groundH(player.pos.x, player.pos.z) + EYE_H + dbgEyeUp + Math.abs(Math.sin(player.stepPhase)) * 0.025 * bobA, player.pos.z - Math.cos(player.stepPhase) * 0.012 * bobA * sy);
   followWorld(camera.position.x, camera.position.z);
   camera.rotation.set(player.pitch, player.yaw, 0);
   if (night.recoilT !== undefined) { // the body jerks back: the head snaps up and away, then settles
@@ -2024,7 +2107,7 @@ function nightStep(dt) {
     if (!night.hushed && now >= night.scareAt - NL.scare.hush * 1000) { night.hushed = true; sound.hush(true); if (msnd) msnd.freeze('none'); } // everything goes quiet
     if (now >= night.scareAt) { night.scareAt = 0; night.passed = false; beginScare(); }
   }
-  if (now < night.readyAt || night.walking) return;
+  if (now < night.readyAt || night.walking || night.homing) return;
   if (night.i < L && !night.toldNext && stationDone(night.i)) { night.toldNext = true; night.nextHintAt = now + 1700; }
   if (fight.on) return;
   if (night.nextHintAt > 0 && now >= night.nextHintAt) { night.nextHintAt = -1; hintNext(); night.lastAct = now; }
@@ -2055,20 +2138,45 @@ if (NIGHT_SCENE) {
   document.addEventListener('fullscreenchange', fsLost); document.addEventListener('webkitfullscreenchange', fsLost);
   ui.again.addEventListener('click', () => location.reload());
 }
-// phone gestures (debug pages take any length of touch as a tap: the test browser draws slowly): a short touch is a tap; a long sideways swipe goes on; up or down on the left is the lantern
+// phone gestures (debug pages take any length of touch as a tap: the test browser draws slowly): a short touch is a tap; a long sideways swipe goes on.
+// 사용자 2026-11-28: lower left is the stick (drag to walk, tap it twice for the lantern); a swipe up or down that starts on the gun (lower right)
+// readies it or lets it down, a long press there reloads; in the gunfight a drag anywhere else looks about
 const gest = new Map();
-function gestureDown(e) {
-  const g = { x: e.clientX, y: e.clientY, t: performance.now() }; gest.set(e.pointerId, g);
-  try { canvas.setPointerCapture(e.pointerId); } catch {}
-  // a long press on the gun (lower right) reloads
-  if (g.x > innerWidth * NL.gun.area[0] && g.y > innerHeight * NL.gun.area[1]) g.timer = setTimeout(() => { if (!g.done && !g.moved && started && !paused && !ended && reloadGun()) { g.done = true; night.lastAct = performance.now(); } }, NL.gun.hold * 1000); // nothing to load: the touch stays free for a swipe
+let stickTapT = -1e9;
+function zoneOf(x, y) {
+  const W = innerWidth, H = innerHeight;
+  if (x < W * NL.stick.area[0] && y > H * NL.stick.area[1]) return 'stick';
+  if (x > W * NL.gun.area[0] && y > H * NL.gun.area[1]) return 'gun';
+  return 'screen';
 }
+function gestureDown(e) {
+  const g = { x: e.clientX, y: e.clientY, lx: e.clientX, ly: e.clientY, t: performance.now(), zone: zoneOf(e.clientX, e.clientY) }; gest.set(e.pointerId, g);
+  try { canvas.setPointerCapture(e.pointerId); } catch {}
+  if (g.zone === 'stick') { // the stick comes up where the thumb is (one thumb at a time)
+    if (joy.id !== null) { g.zone = 'none'; return; }
+    joy.id = e.pointerId; joy.cx = g.x; joy.cy = g.y; joy.x = joy.y = 0;
+    if (ui.joy) { ui.joy.style.left = `${g.x}px`; ui.joy.style.top = `${g.y}px`; ui.joy.classList.add('show'); ui.knob.style.transform = 'translate(-50%,-50%)'; }
+    return;
+  }
+  // a long press on the gun (lower right) reloads
+  if (g.zone === 'gun') g.timer = setTimeout(() => { if (!g.done && !g.moved && started && !paused && !ended && reloadGun()) { g.done = true; night.lastAct = performance.now(); } }, NL.gun.hold * 1000); // nothing to load: the touch stays free for a swipe
+}
+function stickOff(id) { if (joy.id === id) { joy.id = null; joy.x = joy.y = 0; ui.joy?.classList.remove('show'); } }
 function gestureUp(e) {
   const g = gest.get(e.pointerId); gest.delete(e.pointerId);
+  stickOff(e.pointerId);
   if (!g || g.done || !started || paused || ended) return;
-  const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y;
+  const W = innerWidth, H = innerHeight, dx = e.clientX - g.x, dy = e.clientY - g.y, now = performance.now();
   clearTimeout(g.timer);
-  if (e.type !== 'pointercancel' && Math.hypot(dx, dy) < 18 && (DEBUG || performance.now() - g.t < 700)) {
+  const tap = e.type !== 'pointercancel' && Math.hypot(dx, dy) < 18 && (DEBUG || now - g.t < 700);
+  if (g.zone === 'stick') { // tapped twice: the lantern out, or (with a match) lit again
+    if (!tap) return;
+    if (now - stickTapT < NL.stick.dbl * 1000) { stickTapT = -1e9; night.lastAct = now; if (lamp.mode === 'on' || lamp.mode === 'off') lampAction(); }
+    else stickTapT = now;
+    return;
+  }
+  if (g.zone === 'none' || g.look) return;
+  if (tap) {
     const nx = (e.clientX / W) * 2 - 1, ny = 1 - (e.clientY / H) * 2;
     if (rev && rev.state.cocked) nightShoot(nx, ny); else nightTap(nx, ny, true);
     return;
@@ -2079,23 +2187,33 @@ function gestureUp(e) {
 function gestureMove(e) {
   const g = gest.get(e.pointerId);
   if (!g || g.done || !started || paused || ended) return;
-  if (Math.hypot(e.clientX - g.x, e.clientY - g.y) > NL.swipe.still) { g.moved = true; clearTimeout(g.timer); } // moving: not a long press
-  gestureSwipe(g, e.clientX - g.x, e.clientY - g.y);
+  const dx = e.clientX - g.x, dy = e.clientY - g.y;
+  if (Math.hypot(dx, dy) > NL.swipe.still) { g.moved = true; clearTimeout(g.timer); } // moving: not a long press
+  if (g.zone === 'stick') {
+    if (joy.id !== e.pointerId) return;
+    let sx = dx, sy = dy; const r = Math.hypot(sx, sy), R = NL.stick.R;
+    if (r > R) { sx *= R / r; sy *= R / r; }
+    joy.x = sx / R; joy.y = sy / R;
+    if (ui.knob) ui.knob.style.transform = `translate(calc(-50% + ${sx}px), calc(-50% + ${sy}px))`;
+    return;
+  }
+  if (g.zone === 'screen' && fight.on && canMove()) { // the fight: drag to look about
+    if (g.moved) { g.look = true; const k = NL.move.look; player.yaw -= (e.clientX - g.lx) * k; player.pitch = clamp(player.pitch - (e.clientY - g.ly) * k, -1.2, 1.1); }
+    g.lx = e.clientX; g.ly = e.clientY;
+    return;
+  }
+  gestureSwipe(g, dx, dy);
 }
 function gestureSwipe(g, dx, dy) {
+  if (g.zone !== 'gun' && g.zone !== 'screen') return;
   const W = innerWidth, far = Math.min(W, innerHeight) * NL.swipe.far;
-  // the right half, down or up even at a slant (a thumb comes down in an arc): the hammer
-  if (g.x >= W * 0.5 && Math.abs(dy) > far && Math.abs(dy) >= NL.swipe.cock * Math.abs(dx)) {
+  // starting on the gun, down or up even at a slant (a thumb comes down in an arc): the hammer
+  if (g.zone === 'gun' && Math.abs(dy) > far && Math.abs(dy) >= NL.swipe.cock * Math.abs(dx)) {
     g.done = true; clearTimeout(g.timer); night.lastAct = performance.now();
     if (dy > 0) nightCock(); else decockGun();
     return;
   }
-  if (Math.abs(dx) > far && Math.abs(dx) > NL.swipe.ratio * Math.abs(dy)) { g.done = true; nextStation(); return; } // either way: there is no going back
-  if (Math.abs(dy) > far && Math.abs(dy) > NL.swipe.ratio * Math.abs(dx) && g.x < W * 0.5) {
-    g.done = true; night.lastAct = performance.now();
-    if (dy < 0) { if (lamp.mode === 'off') lampAction(); else if (lamp.mode === 'on') raiseTouch = true; } // up: light it, or hold it up
-    else if (raiseTouch) raiseTouch = false; else if (lamp.mode === 'on') lampAction(); // down: lower it, or put it out
-  }
+  if (!fight.on && Math.abs(dx) > far && Math.abs(dx) > NL.swipe.ratio * Math.abs(dy)) { g.done = true; nextStation(); return; } // either way: there is no going back
 }
 
 // ---------------- holding it: pose, sway, lag, tremor, pendulum ----------------
@@ -2764,13 +2882,17 @@ if (DEBUG) {
     music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, twists: sound.twists?.length ?? 0, gun: !!sound.gunBuf, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
     mooNow: () => { if (sound.mooAt) sound.mooAt = sound.ctx.currentTime; },
     monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
+    mouthSpan: () => monster?.mon.M ? mouthSpan(monster.mon.M) : null,
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
     slow: (k) => { dbgTime = k; },
     fakeChance: (k) => { NL.scare.fake.chance = k; },
-    fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp }),
+    fight: () => ({ on: fight.on, phase: fight.phase, hits: fight.hits, d: fight.on ? +Math.hypot(camera.position.x - fight.pos.x, camera.position.z - fight.pos.z).toFixed(2) : null, hp, at: fight.on ? [+fight.pos.x.toFixed(2), +fight.pos.z.toFixed(2)] : null }),
+    faceFight: () => { player.yaw = Math.atan2(-(fight.pos.x - player.pos.x), -(fight.pos.z - player.pos.z)); player.pitch = -0.25; },
     shootMonster: () => { const c = monster; if (c && !c.gone) { nightHit(c); return true; } return false; }, hitFight: () => fightHit(),
     gunState: () => rev && { cocked: rev.state.cocked, anim: rev.state.anim?.type || null, chambers: rev.state.chambers.slice(), top: rev.state.top },
     shootAt: (x, y) => nightShoot(x, y), cock: () => nightCock(), dead: () => cows.filter((c) => c.dead).length,
+    stick: (x, y) => { joy.x = x; joy.y = y; }, pos: () => [+player.pos.x.toFixed(2), +player.pos.z.toFixed(2), +player.yaw.toFixed(2), !!night.homing],
+    zone: (x, y) => zoneOf(x * innerWidth, y * innerHeight), stickTwice: () => { stickTapT = performance.now(); const e = { pointerId: 99, clientX: 40, clientY: innerHeight - 40, type: 'pointerup' }; gest.set(99, { x: 40, y: innerHeight - 40, t: performance.now(), zone: 'stick' }); gestureUp(e); return lamp.mode; },
     nightState: () => ({ i: night.i, walking: night.walking, count, misses: night.misses, matches: lamp.matches, ended, paused, endT: night.endT, finishAt: night.finishAt, sub: ui.sub.textContent, lamp: lamp.mode, raised: raiseTouch, x: +player.pos.x.toFixed(2),
       cows: cows.map((c) => ({ st: c.station, x: +c.mesh.position.x.toFixed(2), y: +c.y0.toFixed(2), z: +c.mesh.position.z.toFixed(2), h: +c.heading.toFixed(3), fi: c.flinchIn ?? null, w: !!c.walk, counted: c.counted })) }),
     tapCow: (i, body) => { const c = cows[i], v = (body ? new THREE.Vector3(c.blockers[1].x, c.y0 + 0.95 * c.s, c.blockers[1].z) : c.eyeWorld.clone()).project(camera); nightTap(v.x, v.y); return [+v.x.toFixed(3), +v.y.toFixed(3)]; },

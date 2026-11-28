@@ -7,7 +7,8 @@ import * as THREE from 'three';
 // which monster each form is (괴물 후보 페이지와 같은 값)
 export const MONSTERS = {
   m3: { roar: 'machine', skin: [0.3, 0.26, 0.22], wr: [0, 1, 0.3], anim: { breath: 1.0, breathHz: 1.5, jaw: 0.7, twitch: 1.2, neck: [0, 0], sway: 1 } },
-  m4: { roar: 'crack', skin: [0.3, 0.27, 0.24], wr: [0.2, 1, 0.6], anim: { breath: 0.6, jaw: 0.45, twitch: 0.9, neck: [0, 0], sway: 0 } },
+  // m4 mouthBelow: 사용자 2026-11-28 덮칠 때 화면 가운데는 눈 아래쪽 입 — 두 눈 높이에서 이만큼 아래부터의 입만 가운데로 (머리 위쪽 방향 m, 세 번째 눈 아래 끝쯤, 임시)
+  m4: { mouthBelow: 0.08, roar: 'crack', skin: [0.3, 0.27, 0.24], wr: [0.2, 1, 0.6], anim: { breath: 0.6, jaw: 0.45, twitch: 0.9, neck: [0, 0], sway: 0 } },
   m5: { roar: 'gargle', skin: [0.02, 0.02, 0.022], wr: [0, 1, 0], smoke: 1, eyeSelf: 2.2, eyeShine: 0.35, anim: { breath: 0.4, jaw: 0.4, twitch: 0.6, neck: [0, 0], sway: 1 } },
 };
 
@@ -165,33 +166,44 @@ export async function loadMonster(url, id, uTime) {
   own.uNeckP.value.fromArray(meta.neck ? meta.neck.base : [0, 1.5, -0.05]);
   (meta.limbs || []).slice(0, 4).forEach((L, i) => { own.uLimbHip.value[i].fromArray(L.hip); own.uLimbKnee.value[i].fromArray(L.knee); own.uLimbPh.value[i] = L.arm ? (L.side > 0 ? Math.PI : 0) : (L.side * L.fore > 0 ? Math.PI : 0); });
   const root = new THREE.Group(); root.add(mesh); root.visible = false;
-  return { id, meta, info, mesh, root, own, mouth: findMouth(mesh.geometry, meta) };
+  return { id, meta, info, mesh, root, own, mouth: findMouth(mesh.geometry, meta, MONSTERS[id]) };
 }
 // the inside of the mouth (the dark mouth surface), in the rest pose, split in two: the part that stays with the skull and
 // the part on the jaw (or, for the split head, the left and the right half), with each vertex's own jaw and head weights,
 // so the middle of the open mouth can be followed exactly as the shader moves it
-function findMouth(g, meta) {
-  const P = g.attributes.position.array, Mt = g.attributes.aMat.array, R = g.attributes.aRig.array, hp = meta.headPivot, hx = meta.headX;
+function findMouth(g, meta, info) {
+  const P = g.attributes.position.array, Mt = g.attributes.aMat.array, R = g.attributes.aRig.array, hp = meta.headPivot, hx = meta.headX, hy = meta.headY;
   const v = [];
   for (let i = 0; i < P.length / 3; i++) {
     if (Mt[4 * i + 1] < 128) continue; // mouth material only
     const x = P[3 * i], y = P[3 * i + 1], z = P[3 * i + 2];
     const side = (x - hp[0]) * hx[0] + (y - hp[1]) * hx[1] + (z - hp[2]) * hx[2] + 1e-5 < 0 ? -1 : 1;
+    const up = (x - hp[0]) * hy[0] + (y - hp[1]) * hy[1] + (z - hp[2]) * hy[2]; // how high on the head (along its up)
     const wj = R[4 * i] / 255, wh = R[4 * i + 1] / 255;
-    v.push(x, y, z, wj, wh, side, meta.split ? (side < 0 ? 0 : 1) : (wj < 0.5 ? 0 : 1));
+    v.push(x, y, z, wj, wh, side, meta.split ? (side < 0 ? 0 : 1) : (wj < 0.5 ? 0 : 1), up);
   }
-  const n = [0, 0]; for (let k = 6; k < v.length; k += 7) n[v[k]]++;
-  return n[0] && n[1] ? { v: new Float32Array(v), n, split: !!meta.split } : null;
+  // 사용자 2026-11-28 (m4): 덮칠 때 화면 가운데는 눈이 아니라 그 아래쪽 입 — only the part of the mouth below this height counts
+  // (the height of the eyes, less info.mouthBelow)
+  let cut = Infinity;
+  if (info?.mouthBelow !== undefined) { const E = meta.eyes; cut = E.reduce((a, e) => a + (e[0] - hp[0]) * hy[0] + (e[1] - hp[1]) * hy[1] + (e[2] - hp[2]) * hy[2], 0) / E.length - info.mouthBelow; }
+  const n = [0, 0]; for (let k = 0; k < v.length; k += 8) if (v[k + 7] <= cut) n[v[k + 6]]++;
+  return n[0] && n[1] ? { v: new Float32Array(v), n, split: !!meta.split, cut } : null;
 }
 // where the middle of the inside of the mouth is now (the same rig as the shader: jaw, then head), in the world
 const _mp = new THREE.Vector3(), _mq = new THREE.Quaternion(), _mq2 = new THREE.Quaternion(), _hx = new THREE.Vector3(), _hy2 = new THREE.Vector3(), _hz = new THREE.Vector3(), _hp = new THREE.Vector3(), _jh = new THREE.Vector3();
 const _acc = [new THREE.Vector3(), new THREE.Vector3()];
+export function mouthSpan(M) { // (debug) how high the mouth reaches on the head, and the eyes, along the head's up (m)
+  const m = M.mouth, hp = M.meta.headPivot, hy = M.meta.headY; if (!m) return null; let lo = 1e9, hi = -1e9, sum = 0, n = 0;
+  for (let k = 0; k < m.v.length; k += 8) { const u = m.v[k + 7]; lo = Math.min(lo, u); hi = Math.max(hi, u); sum += u; n++; }
+  return { lo: +lo.toFixed(3), hi: +hi.toFixed(3), mean: +(sum / n).toFixed(3), cut: +m.cut.toFixed(3), eyes: M.meta.eyes.map((e) => +((e[0] - hp[0]) * hy[0] + (e[1] - hp[1]) * hy[1] + (e[2] - hp[2]) * hy[2]).toFixed(3)) };
+}
 export function mouthWorld(M, out) {
   const o = M.own, m = M.mouth; if (!m) return null;
   _hx.copy(o.uHeadX.value); _hy2.copy(o.uHeadY.value); _hz.copy(o.uHeadZ.value); _hp.copy(o.uHeadP.value); _jh.copy(o.uJawH.value);
   const jaw = o.uJaw.value, r = o.uHeadRot.value, V = m.v;
   _acc[0].set(0, 0, 0); _acc[1].set(0, 0, 0);
-  for (let k = 0; k < V.length; k += 7) {
+  for (let k = 0; k < V.length; k += 8) {
+    if (V[k + 7] > m.cut) continue; // (m4: only below the eye)
     _mp.set(V[k], V[k + 1], V[k + 2]);
     const wj = V[k + 3], wh = V[k + 4];
     if (wj > 0) _mp.sub(_jh).applyQuaternion(m.split ? _mq.setFromAxisAngle(_hy2, jaw * wj * V[k + 5]) : _mq.setFromAxisAngle(_hx, jaw * wj)).add(_jh);
