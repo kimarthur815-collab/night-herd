@@ -26,7 +26,21 @@ body.debug #fps{display:block}
 .card{text-align:center;padding:24px;max-width:520px}
 .card h1{margin:0 0 6px;font-size:clamp(34px,6vw,48px);line-height:1.05;font-weight:700}
 .card .sub{margin:0 0 22px;color:var(--dim);font-size:15px}
-#loadTxt{margin:0 0 22px;color:var(--dim);font-size:15px;min-height:1.5em}
+#loadTxt{margin:0 0 12px;color:var(--dim);font-size:15px;min-height:0}
+/* 사용자: 로딩은 % 대신 회전초가 굴러감 (모양·속도 임시) */
+#weed{position:relative;width:min(320px,70vw);height:56px;margin:0 auto 10px;overflow:hidden;transition:opacity .6s}
+#weed::after{content:"";position:absolute;left:0;right:0;bottom:6px;height:1px;background:linear-gradient(90deg,transparent,rgba(230,225,214,.3),transparent)}
+#weed .roll{position:absolute;bottom:7px;left:0;width:40px;height:40px;animation:weedX 3.6s linear infinite}
+#weed .hop{width:40px;height:40px;animation:weedY 1.2s infinite}
+#weed svg{display:block;animation:weedR 1.15s linear infinite}
+#weed.done{opacity:0}
+@keyframes weedX{from{transform:translateX(-48px)}to{transform:translateX(min(330px,72vw))}}
+@keyframes weedY{0%,100%{transform:translateY(0);animation-timing-function:cubic-bezier(.2,.6,.4,1)}35%{transform:translateY(-13px);animation-timing-function:cubic-bezier(.6,0,.8,.4)}70%{transform:translateY(0);animation-timing-function:cubic-bezier(.2,.6,.4,1)}82%{transform:translateY(-4px);animation-timing-function:cubic-bezier(.6,0,.8,.4)}}
+@keyframes weedR{to{transform:rotate(360deg)}}
+/* 사용자: 로딩 중 팁 (글은 night-layout.js의 tips) */
+#tip{margin:0 auto 20px;color:var(--dim);font-size:14px;line-height:1.6;min-height:4.8em;max-width:420px;transition:opacity .5s;text-wrap:pretty}
+#tip b{color:var(--ink);font-weight:700;margin-right:6px}
+#tip.fade{opacity:0}
 .btn{min-height:48px;padding:10px 22px;border:1px solid rgba(230,225,214,.5);border-radius:999px;background:rgba(5,5,6,.55);color:var(--ink);font:700 16px "Nanum Myeongjo",serif;cursor:pointer;touch-action:none}
 .btn:hover{border-color:rgba(230,225,214,.85)}
 .btn:focus-visible{outline:2px solid var(--ink);outline-offset:3px}
@@ -36,7 +50,7 @@ body.debug #fps{display:block}
 #ver{margin:18px 0 0;font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums}
 #turn{display:none;position:fixed;left:0;right:0;top:12px;margin:0;text-align:center;font-size:13px;color:var(--dim);pointer-events:none}
 body.portrait #turn{display:block}
-@media (prefers-reduced-motion: reduce){#start,#sub,#end{transition:none}}
+@media (prefers-reduced-motion: reduce){#start,#sub,#end{transition:none}#weed .roll,#weed .hop,#weed svg{animation:none}#weed .roll{left:calc(50% - 20px)}}
 </style>
 </head>
 <body>
@@ -46,8 +60,8 @@ body.portrait #turn{display:block}
 <p id="sub" aria-live="polite"></p>
 <div id="pause"><div class="card"><h1>멈춤</h1><p class="sub">밤 장면</p><button id="resume" class="btn" type="button">계속</button></div></div>
 <div id="end"><div class="card"><h1>여기까지</h1><p class="sub">밤 장면은 여기서 끝나요</p><button id="again" class="btn" type="button">다시 하기</button></div></div>
-<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">밤 장면</p><p id="loadTxt">불러오는 중… 0%</p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button><p id="ver">v0.016</p></div></div>
+<div id="start"><div class="card"><h1>Night Herd</h1><p class="sub">밤 장면</p><div id="weed" role="img" aria-label="불러오는 중"><div class="roll"><div class="hop"><svg viewBox="-22 -22 44 44" width="40" height="40"><g fill="none" stroke="#a08a66" stroke-width="1.1" stroke-linecap="round"><ellipse rx="19" ry="17"/><ellipse rx="17" ry="11" transform="rotate(35)"/><ellipse rx="16" ry="9" transform="rotate(-50)"/><ellipse rx="12" ry="18" transform="rotate(80)"/><ellipse rx="9" ry="14" transform="rotate(10)"/><ellipse rx="14" ry="6" transform="rotate(115)"/><path d="M-17 4c6-9 14-12 20-8s8 13 13 10M-12-12c4 7 1 14 7 18s12-2 16 4M-4 18c-3-8 2-14-3-21s-9-6-6-12M6-18c2 9 9 9 10 17"/><path d="M-20-3l-4-1M19 7l4 2M3 19l1 4M-7-18l-2-4M15-12l3-3" stroke-width="0.9"/></g></svg></div></div></div><p id="loadTxt" role="status"></p><p id="tip"></p><button id="startBtn" class="btn" type="button" disabled>불러오는 중</button><p id="ver">v0.017</p></div></div>
 <script>if (matchMedia('(pointer: coarse)').matches) document.body.classList.add('touch'); if (location.hash === '#debug') document.body.classList.add('debug');</script>
-<script src="night.js?v=0.016"></script>
+<script src="night.js?v=0.017"></script>
 </body>
 </html>

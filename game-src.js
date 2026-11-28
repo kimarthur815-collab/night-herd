@@ -2546,13 +2546,20 @@ function frameWalk(now) {
 }
 
 // ---------------- boot ----------------
+// 사용자: 로딩 화면에 팁 — a random one, changing now and then until you start
+if (NIGHT_SCENE && $('tip')) {
+  const el = $('tip'), order = NL.tips.map((_, i) => i).sort(() => Math.random() - 0.5); let i = 0;
+  const show = () => { el.innerHTML = `<b>TIP</b>${NL.tips[order[i++ % order.length]]}`; };
+  show();
+  const timer = setInterval(() => { if (ui.start.classList.contains('gone')) { clearInterval(timer); return; } el.classList.add('fade'); setTimeout(() => { show(); el.classList.remove('fade'); }, 500); }, NL.tipEvery * 1000);
+}
 (async () => {
   try {
     if (!WALK) { makeLantern(); makeArm(); }
     if (GUN) makeGun();
     let parts = 0;
     const total = (WALK ? 3 : 4) + SAGUARO_KINDS.length + 1 + (GUN ? 1 : 0);
-    const bump = () => { parts++; ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; };
+    const bump = () => { parts++; if (!NIGHT_SCENE) ui.loadTxt.textContent = `불러오는 중… ${Math.round((parts / total) * 100)}%`; }; // (the night: a tumbleweed instead of the number)
     const [geos, , sculpts, boneSculpts] = await Promise.all([loadVariants(bump), WALK ? Promise.resolve() : loadHand().then(bump),
       Promise.all(SAGUARO_KINDS.map((k) => loadSculpt(`plants/saguaro-${k}.json`).then((r) => { bump(); return r; }))),
       Promise.all(BONE_PIECES.map((k) => loadSculpt(`plants/bone-${k}.json`))).then((r) => { bump(); return r; }),
@@ -2598,6 +2605,7 @@ function frameWalk(now) {
       : WITH_COUNTING ? 'WASD 걷기 · 마우스 둘러보기 · F 랜턴 끄기와 불 붙이기 · 스페이스나 오른쪽 클릭으로 랜턴 들기'
       : 'WASD 걷기 · 마우스 둘러보기 · 스페이스/오른쪽 클릭 랜턴 들기 · F 끄기와 불 붙이기';
     ui.startBtn.disabled = false; ui.startBtn.textContent = '시작';
+    if (NIGHT_SCENE) $('weed')?.classList.add('done');
     window.__ready = true;
     last = performance.now();
     requestAnimationFrame(WALK ? frameWalk : frame);
