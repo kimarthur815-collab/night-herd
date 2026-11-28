@@ -640,8 +640,8 @@ class Sound {
     if (!this.ctx) return;
     const get = async (u) => { try { return await this.ctx.decodeAudioData(await (await fetch(u)).arrayBuffer()); } catch (e) { return null; } };
     this.musicG = this.ctx.createGain(); this.musicG.gain.value = NL.music.drone; this.musicG.connect(this.master);
-    const [a, b, c, ...tw] = await Promise.all(NL.music.drones.concat(NL.moo.file, NL.fight.twistSound.files).map(get));
-    this.drones = [a, b].filter(Boolean); this.mooBuf = c; this.twists = tw.filter(Boolean); this.droneAt = this.ctx.currentTime + 0.1; this.mooAt = this.ctx.currentTime + rand(...NL.moo.every);
+    const [a, b, c, gun, ...tw] = await Promise.all(NL.music.drones.concat(NL.moo.file, NL.gun.file, NL.fight.twistSound.files).map(get));
+    this.drones = [a, b].filter(Boolean); this.mooBuf = c; this.gunBuf = gun; this.twists = tw.filter(Boolean); this.droneAt = this.ctx.currentTime + 0.1; this.mooAt = this.ctx.currentTime + rand(...NL.moo.every);
   }
   mooTick(cows) { // now and then one of the cows moos (the one that is not a cow too: you can't tell it by its voice)
     if (!this.mooBuf || this.ctx.currentTime < this.mooAt) return;
@@ -1016,6 +1016,13 @@ const gun = { t: 0, kick: 9, thumb: 0, aim: 0, shots: 0, reload: 0 };
 let dbgOrbit = null, rev = null, thumbPivot = null, flashV = null, vmFlash = null, muzzleLight = null, gunEnvMats = [];
 let MUZZLE_Z = -0.2311;
 const gunSnd = makeRevolverSound(() => sound.ctx || null, () => sound.master);
+// 사용자: 총소리는 보내 준 소리 그대로(sounds/gunshot.mp3), 포효처럼 크게 — through the roar's own ceiling. Until the file is in,
+// the old made-up shot (⑨) stands in
+function shotSound() {
+  const n = NIGHT_SCENE && msnd?.input();
+  if (!n || !sound.gunBuf) { gunBang.bang(GAME_SHOT); return; }
+  const s = sound.ctx.createBufferSource(), g = sound.ctx.createGain(); s.buffer = sound.gunBuf; g.gain.value = NL.gun.fileLoud; s.connect(g).connect(n); s.start();
+}
 // 사용자: 총소리는 포효처럼 크게 — the shot itself goes through the roar's own ceiling, as loud as the roar (clicks stay with the game)
 const gunBang = makeRevolverSound(() => sound.ctx || null, (a) => {
   const n = NIGHT_SCENE && msnd?.input(); if (!n) return sound.master;
@@ -1107,7 +1114,7 @@ const _ro = new THREE.Vector3(), _rd = new THREE.Vector3(), _rc = new THREE.Vect
 function raySphere(o, d, c, r) { const ox = o.x - c.x, oy = o.y - c.y, oz = o.z - c.z, b = ox * d.x + oy * d.y + oz * d.z, cc = ox * ox + oy * oy + oz * oz - r * r, h = b * b - cc; if (h < 0) return Infinity; const t = -b - Math.sqrt(h); return t > 0 ? t : Infinity; }
 function shoot() {
   gun.kick = 0; gun.shots++;
-  gunBang.bang(GAME_SHOT);
+  shotSound();
   _ro.copy(camera.position);
   _rd.copy(NIGHT_SCENE && shotAimed ? shotDir : fwd).add(_rc.set((Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012, (Math.random() - 0.5) * 0.012)).normalize();
   shotAimed = false;
@@ -2699,7 +2706,7 @@ if (DEBUG) {
     monster: () => monster && { i: cows.indexOf(monster), clue: monster.mon.clue, st: monster.station, eyes: monster.mon.eyes.map((e) => e.position.toArray().map((v) => +v.toFixed(2))) },
     mouthGlow: (k) => { const M = monster?.mon.M; if (M) M.own.uDbgMouth.value = k; },
     maskOn: () => finalPass.uniforms.uMaskOn.value,
-    music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, twists: sound.twists?.length ?? 0, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
+    music: () => ({ drones: sound.drones?.length ?? 0, moo: !!sound.mooBuf, moos: sound.moos ?? 0, twists: sound.twists?.length ?? 0, gun: !!sound.gunBuf, droneG: +(sound.musicG?.gain.value ?? -1).toFixed(3), next: +(sound.droneAt - sound.ctx?.currentTime).toFixed(1), nextMoo: +(sound.mooAt - sound.ctx?.currentTime).toFixed(1) }),
     mooNow: () => { if (sound.mooAt) sound.mooAt = sound.ctx.currentTime; },
     monMouth: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; const v = mouthWorld(M, new THREE.Vector3()); if (!v) return null; const dz = v.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3())); v.project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3), +dz.toFixed(3), camera.near]; },
     monEyes: () => { const M = monster?.mon.M; if (!M || !M.root.visible) return null; M.root.updateMatrixWorld(true); return M.meta.eyes.map((e) => { const v = new THREE.Vector3(...e).applyMatrix4(M.root.matrixWorld).project(camera); return [+v.x.toFixed(3), +v.y.toFixed(3)]; }); },
